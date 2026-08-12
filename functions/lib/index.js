@@ -50,7 +50,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.forceSignOut = exports.setFeatureFlag = exports.auditLog = exports.verifyTotp = exports.enrollTotp = exports.setDeveloperClaim = exports.provisionStaffAccount = exports.paystackWebhook = exports.verifyPaystackPayment = exports.initializePaystackPayment = void 0;
+exports.forceSignOut = exports.setFeatureFlag = exports.auditLog = exports.verifyTotp = exports.enrollTotp = exports.setDeveloperClaim = exports.provisionStaffAccount = exports.paystackWebhook = exports.verifyPaystackPayment = exports.initializePaystackPayment = exports.resolveStockRequest = exports.updateStockTransfer = exports.createStockTransfer = exports.setUserRole = exports.updateOrderFulfillment = exports.createCheckoutOrder = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const params_1 = require("firebase-functions/params");
 const app_1 = require("firebase-admin/app");
@@ -66,6 +66,8 @@ otplib_1.authenticator.options = { window: 1, step: 30 };
 const APP_NAME = "Cofkans Electricals";
 const COMPANY_DOMAIN = "@cofkanselectricals.com";
 const STAFF_ROLES = new Set([
+    "admin",
+    "customer",
     "manager",
     "developer",
     "branch_manager",
@@ -82,6 +84,16 @@ const STAFF_ROLES = new Set([
     "management_support",
     "support_agent",
 ]);
+const BRANCH_ORDER_STATUSES = new Set([
+    "pending",
+    "confirmed",
+    "preparing",
+    "ready",
+    "out_for_delivery",
+    "completed",
+    "cancelled",
+]);
+const STOCK_TRANSFER_STATUSES = new Set(["pending", "in_transit", "delivered", "cancelled"]);
 function requireDeveloper(req) {
     const uid = req.auth?.uid;
     if (!uid)
@@ -101,6 +113,19 @@ function requireStaffProvisioner(req) {
     const role = req.auth?.token?.role;
     if (role !== "manager" && role !== "developer") {
         throw new https_1.HttpsError("permission-denied", "Manager or developer role required.");
+    }
+    return uid;
+}
+function requireStaff(req, roles) {
+    const uid = req.auth?.uid;
+    if (!uid)
+        throw new https_1.HttpsError("unauthenticated", "Sign-in required.");
+    if (req.auth?.token?.staff !== true && req.auth?.token?.developer !== true) {
+        throw new https_1.HttpsError("permission-denied", "Staff access required.");
+    }
+    const role = typeof req.auth?.token?.role === "string" ? req.auth.token.role : "";
+    if (req.auth?.token?.developer !== true && !roles.includes(role)) {
+        throw new https_1.HttpsError("permission-denied", "Insufficient staff role.");
     }
     return uid;
 }
@@ -135,6 +160,60 @@ function normalizeRole(value) {
         throw new https_1.HttpsError("invalid-argument", "Unsupported staff role.");
     }
     return role;
+}
+function cleanNumber(value, field, opts) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new https_1.HttpsError("invalid-argument", `${field} must be a number.`);
+    }
+    if (opts.int && !Number.isInteger(value)) {
+        throw new https_1.HttpsError("invalid-argument", `${field} must be a whole number.`);
+    }
+    if (value < opts.min || value > opts.max) {
+        throw new https_1.HttpsError("invalid-argument", `${field} is out of range.`);
+    }
+    return value;
+}
+function optionalUrl(value) {
+    if (value == null || value === "")
+        return null;
+    const text = cleanString(value, "image", 1000);
+    return /^https?:\/\//.test(text) || text.startsWith("/") ? text : "";
+}
+function cleanCheckoutAddress(value) {
+    if (!value || typeof value !== "object") {
+        throw new https_1.HttpsError("invalid-argument", "shippingAddress is required.");
+    }
+    const data = value;
+    const email = cleanString(data.email, "email", 254).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new https_1.HttpsError("invalid-argument", "A valid email is required.");
+    }
+    return {
+        fullName: cleanString(data.fullName, "fullName", 120),
+        phone: cleanString(data.phone, "phone", 32),
+        email,
+        region: cleanString(data.region, "region", 80),
+        city: cleanString(data.city, "city", 80),
+        street: cleanString(data.street, "street", 240),
+        postalCode: optionalCleanString(data.postalCode, "postalCode", 32) ?? "",
+        additionalInfo: optionalCleanString(data.additionalInfo, "additionalInfo", 500) ?? "",
+    };
+}
+function cleanCheckoutItems(value) {
+    if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
+        throw new https_1.HttpsError("invalid-argument", "Order must include 1-100 items.");
+    }
+    return value.map((item, index) => {
+        if (!item || typeof item !== "object") {
+            throw new https_1.HttpsError("invalid-argument", `items.${index} is invalid.`);
+        }
+        const data = item;
+        return {
+            productId: cleanString(data.productId, `items.${index}.productId`, 160),
+            variantId: optionalCleanString(data.variantId, `items.${index}.variantId`, 160),
+            quantity: cleanNumber(data.quantity, `items.${index}.quantity`, { min: 1, max: 99, int: true }),
+        };
+    });
 }
 function generateTempPassword() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
@@ -279,6 +358,33 @@ async function markOrderPaidFromPaystack(reference, data) {
             });
             return "amount_or_currency_mismatch";
         }
+        // Decrement stock for each ordered item inside the same transaction.
+        // This prevents oversell (race conditions) by validating available
+        // inventory and decrementing atomically when payment is confirmed.
+        if (Array.isArray(order.items)) {
+            for (const it of order.items) {
+                if (!it || !it.productId)
+                    continue;
+                const productRef = db.collection('products').doc(it.productId);
+                const productSnap = await tx.get(productRef);
+                if (!productSnap.exists) {
+                    console.warn('markOrderPaid: product missing', it.productId);
+                    return 'product_missing';
+                }
+                const product = productSnap.data();
+                const available = typeof product.totalStock === 'number' ? product.totalStock : 0;
+                const qty = typeof it.quantity === 'number' ? it.quantity : 0;
+                if (available < qty) {
+                    console.warn('markOrderPaid: insufficient stock', { productId: it.productId, available, qty });
+                    return 'insufficient_stock';
+                }
+                // Decrement stock
+                tx.update(productRef, {
+                    totalStock: firestore_1.FieldValue.increment(-qty),
+                    updatedAt: firestore_1.FieldValue.serverTimestamp(),
+                });
+            }
+        }
         tx.update(orderRef, {
             paymentStatus: "paid",
             status: "confirmed",
@@ -300,6 +406,271 @@ async function markOrderPaidFromPaystack(reference, data) {
     });
     return { processed: result === "marked_paid" || result === "already_paid", result };
 }
+// ---------------------------------------------------------------------------
+// createCheckoutOrder — server-authoritative order creation.
+// The client sends product ids, quantities, fulfillment, and contact details.
+// The server reads product prices/stock, computes totals, and writes the order.
+// ---------------------------------------------------------------------------
+exports.createCheckoutOrder = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireCustomer(req);
+    if (req.auth?.token?.email_verified !== true && !req.auth?.token?.phone_number) {
+        throw new https_1.HttpsError("permission-denied", "Verified account required to place an order.");
+    }
+    const items = cleanCheckoutItems(req.data?.items);
+    const shippingAddress = cleanCheckoutAddress(req.data?.shippingAddress);
+    const fulfillment = req.data?.fulfillment && typeof req.data.fulfillment === "object" ?
+        req.data.fulfillment : {};
+    const fulfillmentType = cleanString(fulfillment.type, "fulfillment.type", 20);
+    if (fulfillmentType !== "pickup" && fulfillmentType !== "delivery") {
+        throw new https_1.HttpsError("invalid-argument", "Unsupported fulfillment type.");
+    }
+    const branchSlug = cleanString(fulfillment.branchSlug, "fulfillment.branchSlug", 120);
+    const scheduledDate = optionalCleanString(fulfillment.scheduledDate, "fulfillment.scheduledDate", 20);
+    const deliveryFee = fulfillmentType === "pickup" ? 0 : 50;
+    const db = (0, firestore_1.getFirestore)();
+    const productRefs = items.map((item) => db.doc(`products/${item.productId}`));
+    const orderRef = db.collection("orders").doc();
+    const now = firestore_1.FieldValue.serverTimestamp();
+    const result = await db.runTransaction(async (tx) => {
+        const productSnaps = await Promise.all(productRefs.map((ref) => tx.get(ref)));
+        let subtotal = 0;
+        const orderItems = items.map((item, index) => {
+            const snap = productSnaps[index];
+            if (!snap.exists) {
+                throw new https_1.HttpsError("failed-precondition", "A product in your cart is no longer available.");
+            }
+            const product = snap.data();
+            const price = cleanNumber(product.price, "product.price", { min: 0.01, max: 1000000 });
+            const totalStock = typeof product.totalStock === "number" ? product.totalStock : 0;
+            if (product.status !== "active" || product.isAvailable === false || totalStock < item.quantity) {
+                throw new https_1.HttpsError("failed-precondition", `${product.name ?? "Product"} is out of stock.`);
+            }
+            const lineSubtotal = Number((price * item.quantity).toFixed(2));
+            subtotal = Number((subtotal + lineSubtotal).toFixed(2));
+            const primaryImage = product.image || product.images?.find((img) => img?.url)?.url || "";
+            return {
+                productId: item.productId,
+                variantId: item.variantId,
+                sku: product.sku ?? "",
+                name: product.name ?? "Product",
+                image: optionalUrl(primaryImage) ?? "",
+                price,
+                quantity: item.quantity,
+                subtotal: lineSubtotal,
+                taxAmount: 0,
+                productSnapshot: {
+                    name: product.name ?? "Product",
+                    price,
+                    description: product.description ?? "",
+                    specs: product.specs ?? {},
+                },
+            };
+        });
+        const total = Number((subtotal + deliveryFee).toFixed(2));
+        const orderNumber = `ORD-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+        const itemCount = orderItems.reduce((sum, item) => sum + item.quantity, 0);
+        tx.set(orderRef, {
+            id: orderRef.id,
+            orderNumber,
+            userId: uid,
+            userEmail: req.auth?.token?.email ?? shippingAddress.email,
+            customerEmail: req.auth?.token?.email ?? shippingAddress.email,
+            customerName: shippingAddress.fullName,
+            customerPhone: shippingAddress.phone,
+            items: orderItems,
+            itemCount,
+            shippingAddress,
+            subtotal,
+            taxAmount: 0,
+            shippingAmount: deliveryFee,
+            discountAmount: 0,
+            total,
+            currency: "GHS",
+            paymentMethod: "paystack",
+            paymentProvider: "paystack",
+            paymentStatus: "pending",
+            transactionId: null,
+            transactionReference: null,
+            paidAt: null,
+            status: "pending",
+            fulfillmentType,
+            branchSlug,
+            scheduledDate,
+            deliveryMethod: fulfillmentType === "pickup" ? "pickup" : "standard",
+            statusTimeline: { pending: now },
+            createdAt: now,
+            updatedAt: now,
+        });
+        return { orderId: orderRef.id, orderNumber, subtotal, taxAmount: 0, shippingAmount: deliveryFee, total };
+    });
+    return result;
+});
+exports.updateOrderFulfillment = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "branch_manager", "front_desk", "branch_desk", "rider", "driver"]);
+    const role = typeof req.auth?.token?.role === "string" ? req.auth.token.role : "";
+    const branchClaim = typeof req.auth?.token?.branchSlug === "string" ? req.auth.token.branchSlug : null;
+    const orderId = cleanString(req.data?.orderId, "orderId", 160);
+    const status = cleanString(req.data?.status, "status", 40);
+    if (!BRANCH_ORDER_STATUSES.has(status))
+        throw new https_1.HttpsError("invalid-argument", "Invalid order status.");
+    const db = (0, firestore_1.getFirestore)();
+    const orderRef = db.doc(`orders/${orderId}`);
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(orderRef);
+        if (!snap.exists)
+            throw new https_1.HttpsError("not-found", "Order not found.");
+        const order = snap.data();
+        const canGlobal = req.auth?.token?.developer === true || role === "admin" || role === "manager";
+        const canBranch = branchClaim && order.branchSlug === branchClaim && ["branch_manager", "front_desk", "branch_desk"].includes(role);
+        const canRider = branchClaim && order.branchSlug === branchClaim && ["rider", "driver"].includes(role);
+        if (!canGlobal && !canBranch && !canRider) {
+            throw new https_1.HttpsError("permission-denied", "You cannot update this order.");
+        }
+        const patch = {
+            status,
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            lastUpdatedBy: uid,
+            [`statusTimeline.${status}`]: firestore_1.FieldValue.serverTimestamp(),
+        };
+        if (status === "out_for_delivery" && canRider) {
+            patch.driverId = uid;
+            patch.driverName = req.auth?.token?.name ?? null;
+        }
+        if (status === "completed")
+            patch.deliveredAt = firestore_1.FieldValue.serverTimestamp();
+        tx.update(orderRef, patch);
+    });
+    return { ok: true };
+});
+exports.setUserRole = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const actorUid = requireDeveloper(req);
+    const targetUid = cleanString(req.data?.targetUid, "targetUid", 160);
+    const role = normalizeRole(req.data?.role);
+    const branchSlug = optionalCleanString(req.data?.branchSlug, "branchSlug", 120);
+    if (role === "developer") {
+        throw new https_1.HttpsError("invalid-argument", "Use setDeveloperClaim for developer access.");
+    }
+    const auth = (0, auth_1.getAuth)();
+    const db = (0, firestore_1.getFirestore)();
+    await auth.setCustomUserClaims(targetUid, {
+        role,
+        branchSlug,
+        staff: role !== "customer",
+    });
+    await db.doc(`users/${targetUid}`).set({
+        role,
+        isDeveloper: false,
+        promotedBy: actorUid,
+        promotedAt: firestore_1.FieldValue.serverTimestamp(),
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    if (role === "customer") {
+        await db.doc(`staffAccounts/${targetUid}`).set({ active: false, revokedAt: firestore_1.FieldValue.serverTimestamp() }, { merge: true });
+    }
+    await db.collection("auditLogs").add({
+        action: "set_user_role",
+        actorUid,
+        targetUid,
+        role,
+        branchSlug,
+        at: firestore_1.FieldValue.serverTimestamp(),
+    });
+    return { ok: true };
+});
+exports.createStockTransfer = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "branch_manager", "front_desk", "branch_desk", "warehouse"]);
+    const fromBranch = cleanString(req.data?.fromBranch, "fromBranch", 120);
+    const toBranch = cleanString(req.data?.toBranch, "toBranch", 120);
+    const items = cleanCheckoutItems(req.data?.items).map((item) => ({
+        productId: item.productId,
+        name: optionalCleanString(req.data?.items?.find((x) => x?.productId === item.productId)?.name, "name", 200) ?? "Stock item",
+        quantity: item.quantity,
+    }));
+    const db = (0, firestore_1.getFirestore)();
+    const ref = await db.collection("stockTransfers").add({
+        fromBranch,
+        toBranch,
+        items,
+        status: "pending",
+        driverId: null,
+        createdBy: uid,
+        createdAt: firestore_1.FieldValue.serverTimestamp(),
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+    });
+    return { id: ref.id };
+});
+exports.updateStockTransfer = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "front_desk", "branch_desk", "warehouse", "rider", "driver"]);
+    const transferId = cleanString(req.data?.transferId, "transferId", 160);
+    const status = cleanString(req.data?.status, "status", 40);
+    if (!STOCK_TRANSFER_STATUSES.has(status))
+        throw new https_1.HttpsError("invalid-argument", "Invalid transfer status.");
+    const db = (0, firestore_1.getFirestore)();
+    await db.runTransaction(async (tx) => {
+        const ref = db.doc(`stockTransfers/${transferId}`);
+        const snap = await tx.get(ref);
+        if (!snap.exists)
+            throw new https_1.HttpsError("not-found", "Transfer not found.");
+        const current = snap.data();
+        if (current.status === "delivered")
+            throw new https_1.HttpsError("failed-precondition", "Transfer is already delivered.");
+        const patch = {
+            status,
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            lastUpdatedBy: uid,
+        };
+        if (status === "in_transit")
+            patch.driverId = uid;
+        if (status === "delivered")
+            patch.deliveredAt = firestore_1.FieldValue.serverTimestamp();
+        tx.update(ref, patch);
+    });
+    return { ok: true };
+});
+exports.resolveStockRequest = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "front_desk", "branch_desk", "warehouse"]);
+    const requestId = cleanString(req.data?.requestId, "requestId", 160);
+    const decision = cleanString(req.data?.decision, "decision", 20);
+    if (decision !== "approved" && decision !== "declined")
+        throw new https_1.HttpsError("invalid-argument", "Invalid decision.");
+    const db = (0, firestore_1.getFirestore)();
+    let transferId = null;
+    await db.runTransaction(async (tx) => {
+        const requestRef = db.doc(`stockRequests/${requestId}`);
+        const requestSnap = await tx.get(requestRef);
+        if (!requestSnap.exists)
+            throw new https_1.HttpsError("not-found", "Stock request not found.");
+        const data = requestSnap.data();
+        if (data.status && data.status !== "pending")
+            throw new https_1.HttpsError("failed-precondition", "Request already resolved.");
+        if (decision === "approved") {
+            const transferRef = db.collection("stockTransfers").doc();
+            transferId = transferRef.id;
+            tx.set(transferRef, {
+                fromBranch: "kumasi-asuoyeboa",
+                toBranch: data.branchSlug ?? data.branchId ?? "",
+                items: [{
+                        productId: data.productId ?? requestId,
+                        name: data.productName ?? data.name ?? "Stock item",
+                        quantity: cleanNumber(data.quantityRequested ?? data.quantity ?? 1, "quantityRequested", { min: 1, max: 100000, int: true }),
+                    }],
+                status: "pending",
+                driverId: null,
+                sourceRequestId: requestId,
+                createdBy: uid,
+                createdAt: firestore_1.FieldValue.serverTimestamp(),
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            });
+        }
+        tx.update(requestRef, {
+            status: decision,
+            resolvedBy: uid,
+            resolvedAt: firestore_1.FieldValue.serverTimestamp(),
+            ...(decision === "approved" ? { approvedAt: firestore_1.FieldValue.serverTimestamp(), transferId } : { declinedAt: firestore_1.FieldValue.serverTimestamp() }),
+        });
+    });
+    return { ok: true, transferId };
+});
 // ---------------------------------------------------------------------------
 // initializePaystackPayment — creates a server-owned Paystack transaction for
 // an existing pending order. The client never supplies amount or secret data.

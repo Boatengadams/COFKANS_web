@@ -63,3 +63,37 @@ export async function forceSignOut(targetUid: string): Promise<void> {
   const call = httpsCallable<{ targetUid: string }, { ok: true }>(functions, 'forceSignOut');
   await call({ targetUid });
 }
+
+export async function setUserRole(
+  targetUid: string,
+  role: 'customer' | 'technician' | 'driver' | 'admin' | 'manager',
+  branchSlug?: string | null
+): Promise<void> {
+  const call = httpsCallable<
+    { targetUid: string; role: string; branchSlug?: string | null },
+    { ok: true }
+  >(functions, 'setUserRole');
+  await call({ targetUid, role, branchSlug: branchSlug ?? null });
+}
+
+export async function updateStockTransfer(
+  transferId: string,
+  status: 'pending' | 'in_transit' | 'delivered' | 'cancelled'
+): Promise<void> {
+  const call = httpsCallable<
+    { transferId: string; status: string },
+    { ok: true }
+  >(functions, 'updateStockTransfer');
+  await call({ transferId, status });
+}
+
+export async function resolveStockRequest(
+  requestId: string,
+  decision: 'approved' | 'declined'
+): Promise<{ ok: true; transferId?: string | null }> {
+  const call = httpsCallable<
+    { requestId: string; decision: string },
+    { ok: true; transferId?: string | null }
+  >(functions, 'resolveStockRequest');
+  return (await call({ requestId, decision })).data;
+}

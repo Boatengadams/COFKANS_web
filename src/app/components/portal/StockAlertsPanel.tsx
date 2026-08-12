@@ -11,10 +11,12 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AlertTriangle, CheckCircle2, XCircle, Package, RefreshCw } from 'lucide-react';
-import { addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
 import { DEMO_MODE } from '../../../lib/demo-mode';
 import { useBranches } from '../../../lib/branches';
 import { db } from '../../../lib/firebase';
+import { resolveStockRequest } from '../../../lib/totp-client';
+import toast from 'react-hot-toast';
 
 type AlertStatus = 'pending' | 'approved' | 'declined';
 
@@ -99,43 +101,52 @@ export function StockAlertsPanel() {
   const approve = async (alert: StockAlert) => {
     setProcessing(alert.id);
     await new Promise(r => setTimeout(r, 400));
-    const transfer = {
-      fromBranch: SHOWROOM_SLUG,
-      toBranch: alert.branchSlug,
-      items: [{ productId: alert.id, name: alert.productName, quantity: alert.quantityRequested }],
-      status: 'pending',
-      driverId: null,
-      createdAt: DEMO_MODE ? new Date().toISOString() : serverTimestamp(),
-    };
+    
     if (DEMO_MODE) {
+      const transfer = {
+        id: `TR-${Date.now()}`,
+        fromBranch: SHOWROOM_SLUG,
+        toBranch: alert.branchSlug,
+        items: [{ productId: alert.id, name: alert.productName, quantity: alert.quantityRequested }],
+        status: 'pending',
+        driverId: null,
+        createdAt: new Date().toISOString(),
+      };
       const transfers = loadTransfers();
-      transfers.unshift({ id: `TR-${Date.now()}`, ...transfer });
+      transfers.unshift(transfer);
       saveTransfers(transfers.slice(0, 200));
+      const next = alerts.map(a => a.id === alert.id ? { ...a, status: 'approved' as const } : a);
+      setAlerts(next);
+      saveAlerts(next);
     } else {
-      await addDoc(collection(db, 'stockTransfers'), transfer);
-      await updateDoc(doc(db, 'stockRequests', alert.id), {
-        status: 'approved',
-        approvedAt: serverTimestamp(),
-      });
+      try {
+        await resolveStockRequest(alert.id, 'approved');
+        const next = alerts.map(a => a.id === alert.id ? { ...a, status: 'approved' as const } : a);
+        setAlerts(next);
+      } catch (error) {
+        toast.error('Failed to approve stock request');
+      }
     }
-    const next = alerts.map(a => a.id === alert.id ? { ...a, status: 'approved' as const } : a);
-    setAlerts(next);
-    if (DEMO_MODE) saveAlerts(next);
     setProcessing(null);
   };
 
   const decline = async (id: string) => {
     setProcessing(id);
     await new Promise(r => setTimeout(r, 300));
-    if (!DEMO_MODE) {
-      await updateDoc(doc(db, 'stockRequests', id), {
-        status: 'declined',
-        declinedAt: serverTimestamp(),
-      });
+    
+    if (DEMO_MODE) {
+      const next = alerts.map(a => a.id === id ? { ...a, status: 'declined' as const } : a);
+      setAlerts(next);
+      saveAlerts(next);
+    } else {
+      try {
+        await resolveStockRequest(id, 'declined');
+        const next = alerts.map(a => a.id === id ? { ...a, status: 'declined' as const } : a);
+        setAlerts(next);
+      } catch (error) {
+        toast.error('Failed to decline stock request');
+      }
     }
-    const next = alerts.map(a => a.id === id ? { ...a, status: 'declined' as const } : a);
-    setAlerts(next);
-    if (DEMO_MODE) saveAlerts(next);
     setProcessing(null);
   };
 

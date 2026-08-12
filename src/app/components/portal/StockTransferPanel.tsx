@@ -10,10 +10,12 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Package, Truck, CheckCircle2, Clock, MapPin, ChevronDown } from 'lucide-react';
-import { collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
 import { DEMO_MODE } from '../../../lib/demo-mode';
 import { useBranches } from '../../../lib/branches';
 import { db } from '../../../lib/firebase';
+import { updateStockTransfer } from '../../../lib/totp-client';
+import toast from 'react-hot-toast';
 
 type TransferStatus = 'pending' | 'in_transit' | 'delivered';
 
@@ -113,9 +115,15 @@ export function StockTransferPanel({ mode, driverUid }: Props) {
       return next;
     });
     if (!DEMO_MODE) {
-      const livePatch: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
-      if (patch.deliveredAt) livePatch.deliveredAt = serverTimestamp();
-      await updateDoc(doc(db, 'stockTransfers', id), livePatch);
+      try {
+        if (patch.status) {
+          await updateStockTransfer(id, patch.status as TransferStatus);
+        }
+      } catch (error) {
+        toast.error('Failed to update transfer');
+        // Rollback optimistic update
+        setTransfers(prev => prev.map(t => t.id === id ? transfers.find(x => x.id === id) || t : t));
+      }
     }
   };
 

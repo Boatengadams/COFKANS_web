@@ -268,6 +268,14 @@ service cloud.firestore {
       allow create, update, delete: if isDeveloper();
     }
 
+    // ===== BRANCHES COLLECTION - DEVELOPER-ONLY WRITES =====
+    // Branch network directory (storefront, checkout, portal). Public read
+    // (storefront displays branch locations). Only developers can create/update/delete.
+    match /branches/{branchId} {
+      allow read: if true;
+      allow create, update, delete: if isDeveloper();
+    }
+
     // ===== PRODUCTS COLLECTION - ENHANCED SECURITY =====
 
     match /products/{productId} {
@@ -411,6 +419,30 @@ service cloud.firestore {
 
       // OWASP A01: Only admins can delete orders (soft delete recommended)
       allow delete: if isAdmin();
+    }
+
+    // ===== STOCK TRANSFERS COLLECTION - SERVER-SIDE ONLY =====
+    // All mutations go through Cloud Functions (createStockTransfer, updateStockTransfer).
+    // Direct client writes are forbidden.
+    match /stockTransfers/{transferId} {
+      // Authorized users can read stock transfers (staff, drivers)
+      allow read: if isSignedIn() &&
+                     (staffExists() || isDriver() || isAdmin());
+      
+      // All writes (create, update, delete) are forbidden—only Cloud Functions can write
+      allow create, update, delete: if false;
+    }
+
+    // ===== STOCK REQUESTS COLLECTION - SERVER-SIDE ONLY =====
+    // All mutations go through Cloud Functions (resolveStockRequest).
+    // Direct client writes are forbidden.
+    match /stockRequests/{requestId} {
+      // Authorized users can read stock requests (staff, admin)
+      allow read: if isSignedIn() &&
+                     (staffExists() || isAdmin());
+      
+      // All writes (create, update, delete) are forbidden—only Cloud Functions can write
+      allow create, update, delete: if false;
     }
 
     // ===== REVIEWS COLLECTION - ENHANCED SECURITY =====

@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { collection, query, getDocs, orderBy, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { promoteUserRole, demoteUser, isDeveloper } from '@/lib/admin-service';
+import { isDeveloper } from '@/lib/admin-service';
 import { hasDeveloperClaim } from '@/lib/auth-claims';
 import { requireDevPasscode } from '@/lib/dev-passcode';
+import { setUserRole } from '@/lib/totp-client';
 import { useFirebaseAuth } from '../../contexts/FirebaseAuthContext';
 import { sanitizeInput } from '@/lib/security-service';
 import toast from 'react-hot-toast';
@@ -107,19 +108,9 @@ export function UserManagementPanel() {
 
     try {
       setPromotingUserId(userId);
-
-      const result = await promoteUserRole(
-        currentUser.uid,
-        userId,
-        newRole
-      );
-
-      if (result.success) {
-        toast.success(`User promoted to ${newRole} successfully`);
-        await loadUsers(); // Reload to show updated data
-      } else {
-        toast.error(result.error || 'Failed to promote user');
-      }
+      await setUserRole(userId, newRole);
+      toast.success(`User promoted to ${newRole} successfully`);
+      await loadUsers(); // Reload to show updated data
     } catch (error) {
       console.error('Promotion error:', error);
       toast.error('An error occurred while promoting the user');
@@ -146,15 +137,9 @@ export function UserManagementPanel() {
 
     try {
       setPromotingUserId(userId);
-
-      const result = await demoteUser(currentUser.uid, userId);
-
-      if (result.success) {
-        toast.success('User demoted to customer successfully');
-        await loadUsers();
-      } else {
-        toast.error(result.error || 'Failed to demote user');
-      }
+      await setUserRole(userId, 'customer');
+      toast.success('User demoted to customer successfully');
+      await loadUsers();
     } catch (error) {
       console.error('Demotion error:', error);
       toast.error('An error occurred while demoting the user');
