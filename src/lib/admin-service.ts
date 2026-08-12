@@ -109,141 +109,16 @@ export async function checkIsDeveloper(userId: string): Promise<boolean> {
  * Promote user to admin or technician
  * Only developer can perform this action
  */
-export async function promoteUserRole(
-  developerId: string,
-  targetUserId: string,
-  newRole: 'admin' | 'technician' | 'driver'
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    // Verify developer status
-    const isDeveloperUser = await checkIsDeveloper(developerId);
-    if (!isDeveloperUser) {
-      return {
-        success: false,
-        error: 'Only developer can promote users',
-      };
-    }
+// Legacy client-side promotion helpers (DEPRECATED)
+// These functions used to perform client-side Firestore writes to change
+// user roles. Role mutation is now handled server-side by the
+// `setUserRole` Cloud Function which uses the Admin SDK and enforces
+// developer-only permission. The old helpers are intentionally removed
+// to avoid accidental client-side escalation.
 
-    // Get target user
-    const targetUserRef = doc(db, 'users', targetUserId);
-    const targetUserDoc = await getDoc(targetUserRef);
-
-    if (!targetUserDoc.exists()) {
-      return {
-        success: false,
-        error: 'Target user not found',
-      };
-    }
-
-    const targetUserData = targetUserDoc.data();
-
-    // Validate email domain for staff roles
-    if (!canHaveRole(targetUserData.email, newRole)) {
-      return {
-        success: false,
-        error: `${newRole} role requires ${COMPANY_EMAIL_DOMAIN} email domain`,
-      };
-    }
-
-    // Update role
-    await updateDoc(targetUserRef, {
-      role: newRole,
-      promotedBy: developerId,
-      promotedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    // Log audit event
-    await logAuditEvent(
-      'role_promoted',
-      developerId,
-      'user',
-      targetUserId,
-      {
-        oldRole: targetUserData.role,
-        newRole,
-        email: targetUserData.email,
-      }
-    );
-
-    return { success: true };
-  } catch (error) {
-    console.error('Failed to promote user:', error);
-    return {
-      success: false,
-      error: 'Failed to promote user role',
-    };
-  }
-}
-
-/**
- * Demote user back to customer
- */
-export async function demoteUser(
-  developerId: string,
-  targetUserId: string
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    // Verify developer status
-    const isDeveloperUser = await checkIsDeveloper(developerId);
-    if (!isDeveloperUser) {
-      return {
-        success: false,
-        error: 'Only developer can demote users',
-      };
-    }
-
-    // Get target user
-    const targetUserRef = doc(db, 'users', targetUserId);
-    const targetUserDoc = await getDoc(targetUserRef);
-
-    if (!targetUserDoc.exists()) {
-      return {
-        success: false,
-        error: 'Target user not found',
-      };
-    }
-
-    const targetUserData = targetUserDoc.data();
-
-    // Cannot demote developer
-    if (targetUserData.isDeveloper) {
-      return {
-        success: false,
-        error: 'Cannot demote developer',
-      };
-    }
-
-    // Update to customer role
-    await updateDoc(targetUserRef, {
-      role: 'customer',
-      demotedBy: developerId,
-      demotedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    // Log audit event
-    await logAuditEvent(
-      'role_demoted',
-      developerId,
-      'user',
-      targetUserId,
-      {
-        oldRole: targetUserData.role,
-        newRole: 'customer',
-        email: targetUserData.email,
-      }
-    );
-
-    return { success: true };
-  } catch (error) {
-    console.error('Failed to demote user:', error);
-    return {
-      success: false,
-      error: 'Failed to demote user',
-    };
-  }
-}
+// NOTE: If needed for migration/testing, use the `setUserRole` Cloud
+// Function from the client (via totp-client.ts) instead of restoring
+// these helpers.
 
 /**
  * Validate staff email/password sign-in
