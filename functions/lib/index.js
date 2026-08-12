@@ -1,0 +1,704 @@
+"use strict";
+/**
+ * Developer-portal Cloud Functions.
+ *
+ * All three functions sit *behind* the Cloudflare WAF IP gate that protects
+ * /developer-portal, but each one also independently checks the caller's
+ * developer custom claim. Defence in depth: a leaked client trick or
+ * misconfigured WAF rule still cannot escalate privilege.
+ *
+ * Exposed callables:
+ *   setDeveloperClaim   grant / revoke `developer:true` on a target uid
+ *   enrollTotp          generate a TOTP secret + otpauth URL for first-time setup
+ *   verifyTotp          validate a 6-digit code against the stored secret
+ *
+ * Bootstrap chicken-and-egg: the very first developer claim is granted by
+ * running `firebase functions:shell` (or the gcloud CLI) once against your
+ * own uid. After that the portal manages itself.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.forceSignOut = exports.setFeatureFlag = exports.auditLog = exports.verifyTotp = exports.enrollTotp = exports.setDeveloperClaim = exports.provisionStaffAccount = exports.paystackWebhook = exports.verifyPaystackPayment = exports.initializePaystackPayment = void 0;
+const https_1 = require("firebase-functions/v2/https");
+const params_1 = require("firebase-functions/params");
+const app_1 = require("firebase-admin/app");
+const auth_1 = require("firebase-admin/auth");
+const firestore_1 = require("firebase-admin/firestore");
+const otplib_1 = require("otplib");
+const QRCode = __importStar(require("qrcode"));
+const node_crypto_1 = require("node:crypto");
+(0, app_1.initializeApp)();
+const paystackSecretKey = (0, params_1.defineSecret)("PAYSTACK_SECRET_KEY");
+// 30s step + ±1 window = ~90s tolerance for clock drift.
+otplib_1.authenticator.options = { window: 1, step: 30 };
+const APP_NAME = "Cofkans Electricals";
+const COMPANY_DOMAIN = "@cofkanselectricals.com";
+const STAFF_ROLES = new Set([
+    "manager",
+    "developer",
+    "branch_manager",
+    "front_desk",
+    "branch_desk",
+    "rider",
+    "driver",
+    "technician",
+    "warehouse",
+    "accountant",
+    "hr",
+    "procurement",
+    "marketing",
+    "management_support",
+    "support_agent",
+]);
+function requireDeveloper(req) {
+    const uid = req.auth?.uid;
+    if (!uid)
+        throw new https_1.HttpsError("unauthenticated", "Sign-in required.");
+    if (req.auth?.token?.developer !== true) {
+        throw new https_1.HttpsError("permission-denied", "Developer claim required.");
+    }
+    return uid;
+}
+function requireStaffProvisioner(req) {
+    const uid = req.auth?.uid;
+    if (!uid)
+        throw new https_1.HttpsError("unauthenticated", "Sign-in required.");
+    if (req.auth?.token?.staff !== true) {
+        throw new https_1.HttpsError("permission-denied", "Staff claim required.");
+    }
+    const role = req.auth?.token?.role;
+    if (role !== "manager" && role !== "developer") {
+        throw new https_1.HttpsError("permission-denied", "Manager or developer role required.");
+    }
+    return uid;
+}
+function cleanString(value, field, max) {
+    if (typeof value !== "string") {
+        throw new https_1.HttpsError("invalid-argument", `${field} must be a string.`);
+    }
+    const cleaned = value.trim();
+    if (!cleaned || cleaned.length > max) {
+        throw new https_1.HttpsError("invalid-argument", `${field} is required and must be ${max} characters or fewer.`);
+    }
+    return cleaned;
+}
+function optionalCleanString(value, field, max) {
+    if (value == null || value === "")
+        return null;
+    return cleanString(value, field, max);
+}
+function normalizeEmail(value) {
+    const email = cleanString(value, "email", 254).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new https_1.HttpsError("invalid-argument", "A valid email is required.");
+    }
+    if (!email.endsWith(COMPANY_DOMAIN)) {
+        throw new https_1.HttpsError("permission-denied", `Staff email must use ${COMPANY_DOMAIN}.`);
+    }
+    return email;
+}
+function normalizeRole(value) {
+    const role = cleanString(value, "role", 64);
+    if (!STAFF_ROLES.has(role)) {
+        throw new https_1.HttpsError("invalid-argument", "Unsupported staff role.");
+    }
+    return role;
+}
+function generateTempPassword() {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    const bytes = (0, node_crypto_1.randomBytes)(18);
+    let out = "";
+    for (const byte of bytes)
+        out += chars[byte % chars.length];
+    return `${out}!9`;
+}
+function getPaystackSignature(req) {
+    const header = req.header("x-paystack-signature");
+    return typeof header === "string" ? header.trim() : "";
+}
+function hasValidPaystackSignature(rawBody, signature, secretKey) {
+    if (!signature)
+        return false;
+    const expected = (0, node_crypto_1.createHmac)("sha512", secretKey).update(rawBody).digest("hex");
+    const expectedBuffer = Buffer.from(expected, "hex");
+    const actualBuffer = Buffer.from(signature, "hex");
+    return expectedBuffer.length === actualBuffer.length && (0, node_crypto_1.timingSafeEqual)(expectedBuffer, actualBuffer);
+}
+function extractPaystackReference(body) {
+    if (!body || typeof body !== "object")
+        return null;
+    const data = body.data;
+    if (!data || typeof data !== "object")
+        return null;
+    const reference = data.reference;
+    return typeof reference === "string" && reference.trim() ? reference.trim() : null;
+}
+function requireCustomer(req) {
+    const uid = req.auth?.uid;
+    if (!uid)
+        throw new https_1.HttpsError("unauthenticated", "Sign-in required.");
+    return uid;
+}
+function getPaystackSecretKey() {
+    const secretKey = paystackSecretKey.value() || process.env.PAYSTACK_SECRET_KEY;
+    if (!secretKey) {
+        throw new https_1.HttpsError("failed-precondition", "Paystack secret key is not configured.");
+    }
+    return secretKey;
+}
+function getPaystackPublicKey() {
+    const publicKey = process.env.PAYSTACK_PUBLIC_KEY;
+    if (!publicKey || !publicKey.startsWith("pk_")) {
+        throw new https_1.HttpsError("failed-precondition", "Paystack public key is not configured.");
+    }
+    return publicKey;
+}
+function normalizeAmountPesewas(total) {
+    if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) {
+        throw new https_1.HttpsError("failed-precondition", "Order has an invalid total.");
+    }
+    return Math.round(total * 100);
+}
+function normalizePaystackReference(value) {
+    const reference = cleanString(value, "reference", 120);
+    if (!/^[A-Za-z0-9._=-]+$/.test(reference)) {
+        throw new https_1.HttpsError("invalid-argument", "Invalid Paystack reference.");
+    }
+    return reference;
+}
+function newPaystackReference(orderId) {
+    const suffix = (0, node_crypto_1.randomBytes)(5).toString("hex").toUpperCase();
+    return `CFK-${Date.now()}-${orderId.slice(-6).toUpperCase()}-${suffix}`;
+}
+async function initializePaystackTransaction(input) {
+    const res = await fetch("https://api.paystack.co/transaction/initialize", {
+        method: "POST",
+        headers: {
+            authorization: `Bearer ${input.secretKey}`,
+            "content-type": "application/json",
+            accept: "application/json",
+        },
+        body: JSON.stringify({
+            email: input.email,
+            amount: input.amount,
+            currency: "GHS",
+            reference: input.reference,
+            callback_url: input.callbackUrl ?? undefined,
+            metadata: input.metadata ?? {},
+        }),
+    });
+    const text = await res.text();
+    let json;
+    try {
+        json = JSON.parse(text);
+    }
+    catch {
+        throw new Error(`Paystack initialize returned non-JSON response (${res.status})`);
+    }
+    if (!res.ok || json?.status !== true) {
+        throw new Error(`Paystack initialize failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`);
+    }
+    return json;
+}
+async function verifyPaystackTransaction(reference, secretKey) {
+    const res = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+        method: "GET",
+        headers: {
+            authorization: `Bearer ${secretKey}`,
+            accept: "application/json",
+        },
+    });
+    const text = await res.text();
+    let json;
+    try {
+        json = JSON.parse(text);
+    }
+    catch {
+        throw new Error(`Paystack verify returned non-JSON response (${res.status})`);
+    }
+    if (!res.ok) {
+        throw new Error(`Paystack verify failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`);
+    }
+    return json;
+}
+async function markOrderPaidFromPaystack(reference, data) {
+    if (data.status !== "success" || data.reference !== reference) {
+        return { processed: false, result: "not_success" };
+    }
+    const db = (0, firestore_1.getFirestore)();
+    const orders = await db.collection("orders").where("paymentReference", "==", reference).limit(1).get();
+    if (orders.empty)
+        return { processed: false, result: "order_not_found" };
+    const orderRef = orders.docs[0].ref;
+    const result = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(orderRef);
+        if (!snap.exists)
+            return "missing";
+        const order = snap.data();
+        if (order.paymentStatus === "paid")
+            return "already_paid";
+        const expectedAmount = normalizeAmountPesewas(order.total);
+        if (data.amount !== expectedAmount || data.currency !== "GHS") {
+            console.warn("paystack amount/currency mismatch", {
+                reference,
+                expectedAmount,
+                verifiedAmount: data.amount,
+                verifiedCurrency: data.currency,
+            });
+            return "amount_or_currency_mismatch";
+        }
+        tx.update(orderRef, {
+            paymentStatus: "paid",
+            status: "confirmed",
+            paymentProvider: "paystack",
+            transactionId: data.id ? String(data.id) : null,
+            transactionReference: reference,
+            paystackVerified: true,
+            paystackTransactionId: data.id ?? null,
+            paystackReference: reference,
+            paystackAmount: data.amount ?? null,
+            paystackCurrency: data.currency ?? null,
+            paystackChannel: data.channel ?? null,
+            paystackGatewayResponse: data.gateway_response ?? null,
+            paidAt: firestore_1.FieldValue.serverTimestamp(),
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            "statusTimeline.confirmed": firestore_1.FieldValue.serverTimestamp(),
+        });
+        return "marked_paid";
+    });
+    return { processed: result === "marked_paid" || result === "already_paid", result };
+}
+// ---------------------------------------------------------------------------
+// initializePaystackPayment — creates a server-owned Paystack transaction for
+// an existing pending order. The client never supplies amount or secret data.
+// ---------------------------------------------------------------------------
+exports.initializePaystackPayment = (0, https_1.onCall)({ region: "us-central1", secrets: [paystackSecretKey] }, async (req) => {
+    const uid = requireCustomer(req);
+    const orderId = cleanString(req.data?.orderId, "orderId", 160);
+    const callbackUrl = optionalCleanString(req.data?.callbackUrl, "callbackUrl", 500);
+    const db = (0, firestore_1.getFirestore)();
+    const orderRef = db.doc(`orders/${orderId}`);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) {
+        throw new https_1.HttpsError("not-found", "Order not found.");
+    }
+    const order = orderSnap.data();
+    if (order.userId !== uid) {
+        throw new https_1.HttpsError("permission-denied", "You can only initialize your own order payment.");
+    }
+    if (order.paymentStatus === "paid") {
+        throw new https_1.HttpsError("failed-precondition", "Order is already paid.");
+    }
+    const email = cleanString(order.shippingAddress?.email ?? order.userEmail, "email", 254).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new https_1.HttpsError("failed-precondition", "Order needs a valid customer email.");
+    }
+    const amount = normalizeAmountPesewas(order.total);
+    const reference = order.paymentReference || newPaystackReference(orderId);
+    const secretKey = getPaystackSecretKey();
+    const publicKey = getPaystackPublicKey();
+    const initialized = await initializePaystackTransaction({
+        secretKey,
+        email,
+        amount,
+        reference,
+        callbackUrl,
+        metadata: {
+            orderId,
+            userId: uid,
+            customerName: order.shippingAddress?.fullName ?? null,
+            customerPhone: order.shippingAddress?.phone ?? null,
+            region: order.shippingAddress?.region ?? null,
+            city: order.shippingAddress?.city ?? null,
+        },
+    });
+    await orderRef.set({
+        paymentMethod: "paystack",
+        paymentProvider: "paystack",
+        paymentStatus: "processing",
+        paymentReference: initialized.data.reference,
+        transactionReference: initialized.data.reference,
+        paystackAccessCode: initialized.data.access_code ?? null,
+        paystackAuthorizationUrl: initialized.data.authorization_url ?? null,
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return {
+        publicKey,
+        reference: initialized.data.reference,
+        accessCode: initialized.data.access_code ?? null,
+        authorizationUrl: initialized.data.authorization_url ?? null,
+        amount,
+        currency: "GHS",
+        email,
+    };
+});
+// ---------------------------------------------------------------------------
+// verifyPaystackPayment — customer-callable verification after popup success.
+// Webhook remains the primary async confirmation path; this closes the loop
+// immediately when the customer returns from Paystack.
+// ---------------------------------------------------------------------------
+exports.verifyPaystackPayment = (0, https_1.onCall)({ region: "us-central1", secrets: [paystackSecretKey] }, async (req) => {
+    const uid = requireCustomer(req);
+    const reference = normalizePaystackReference(req.data?.reference);
+    const db = (0, firestore_1.getFirestore)();
+    const orders = await db.collection("orders").where("paymentReference", "==", reference).limit(1).get();
+    if (orders.empty) {
+        throw new https_1.HttpsError("not-found", "Order not found for payment reference.");
+    }
+    const order = orders.docs[0].data();
+    if (order.userId !== uid) {
+        throw new https_1.HttpsError("permission-denied", "You can only verify your own order payment.");
+    }
+    const verified = await verifyPaystackTransaction(reference, getPaystackSecretKey());
+    if (verified.status !== true || !verified.data) {
+        return { ok: true, processed: false, result: "verify_failed" };
+    }
+    const result = await markOrderPaidFromPaystack(reference, verified.data);
+    return { ok: true, ...result };
+});
+// ---------------------------------------------------------------------------
+// paystackWebhook — authoritative payment confirmation endpoint.
+// The client only creates pending orders. This function verifies Paystack's
+// HMAC signature, re-checks the reference against Paystack's API, and marks
+// the matching Firestore order as paid in an idempotent transaction.
+// ---------------------------------------------------------------------------
+exports.paystackWebhook = (0, https_1.onRequest)({ region: "us-central1", secrets: [paystackSecretKey] }, async (req, res) => {
+    if (req.method !== "POST") {
+        res.status(405).send("Method not allowed");
+        return;
+    }
+    const secretKey = paystackSecretKey.value() || process.env.PAYSTACK_SECRET_KEY;
+    if (!secretKey) {
+        console.error("paystackWebhook missing PAYSTACK_SECRET_KEY");
+        res.status(500).send("Webhook not configured");
+        return;
+    }
+    const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(JSON.stringify(req.body ?? {}));
+    const signature = getPaystackSignature(req);
+    if (!hasValidPaystackSignature(rawBody, signature, secretKey)) {
+        console.warn("paystackWebhook rejected invalid signature", {
+            hasSignature: Boolean(signature),
+            bodyLength: rawBody.length,
+        });
+        res.status(401).send("Invalid signature");
+        return;
+    }
+    const reference = extractPaystackReference(req.body);
+    if (!reference) {
+        console.warn("paystackWebhook missing transaction reference");
+        res.status(400).send("Missing reference");
+        return;
+    }
+    try {
+        const verified = await verifyPaystackTransaction(reference, secretKey);
+        const data = verified.data;
+        if (verified.status !== true || data?.status !== "success" || data.reference !== reference) {
+            console.warn("paystackWebhook verification did not pass", {
+                reference,
+                verifyStatus: verified.status,
+                transactionStatus: data?.status,
+                verifiedReference: data?.reference,
+            });
+            res.status(202).json({ ok: true, processed: false });
+            return;
+        }
+        const result = await markOrderPaidFromPaystack(reference, data);
+        console.info("paystackWebhook processed", { reference, result });
+        res.status(200).json({ ok: true, ...result });
+    }
+    catch (err) {
+        console.error("paystackWebhook processing failed", { reference, err });
+        res.status(500).send("Webhook processing failed");
+    }
+});
+// ---------------------------------------------------------------------------
+// provisionStaffAccount — server-side staff account creation.
+// Only callers with custom claims {staff:true, role:'manager'|'developer'} may
+// create staff users. The temporary password/reset link are returned to the
+// caller for manual handoff; v1 never emails credentials automatically.
+// ---------------------------------------------------------------------------
+exports.provisionStaffAccount = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const actorUid = requireStaffProvisioner(req);
+    const name = cleanString(req.data?.name, "name", 120);
+    const email = normalizeEmail(req.data?.email);
+    const role = normalizeRole(req.data?.role);
+    const branchSlug = optionalCleanString(req.data?.branchSlug, "branchSlug", 120);
+    const phone = optionalCleanString(req.data?.phone, "phone", 32);
+    if (["branch_manager", "front_desk", "branch_desk", "rider", "driver"].includes(role) && !branchSlug) {
+        throw new https_1.HttpsError("invalid-argument", "branchSlug is required for branch-scoped staff roles.");
+    }
+    const auth = (0, auth_1.getAuth)();
+    const db = (0, firestore_1.getFirestore)();
+    const tempPassword = generateTempPassword();
+    let createdUid = null;
+    try {
+        const user = await auth.createUser({
+            email,
+            password: tempPassword,
+            displayName: name,
+            phoneNumber: phone ?? undefined,
+            emailVerified: false,
+            disabled: false,
+        });
+        createdUid = user.uid;
+        await auth.setCustomUserClaims(user.uid, {
+            role,
+            branchSlug,
+            staff: true,
+        });
+        const resetLink = await auth.generatePasswordResetLink(email);
+        const now = firestore_1.FieldValue.serverTimestamp();
+        await db.doc(`users/${user.uid}`).set({
+            uid: user.uid,
+            email,
+            displayName: name,
+            phoneNumber: phone,
+            photoURL: null,
+            provider: "email",
+            emailVerified: false,
+            role,
+            isDeveloper: role === "developer",
+            mustChangePassword: true,
+            createdBy: actorUid,
+            createdAt: now,
+            updatedAt: now,
+        });
+        await db.doc(`staffAccounts/${user.uid}`).set({
+            uid: user.uid,
+            email,
+            displayName: name,
+            phone,
+            role,
+            branchSlug,
+            active: true,
+            mustResetPassword: true,
+            createdBy: actorUid,
+            createdAt: now,
+            updatedAt: now,
+        });
+        await db.collection("auditLogs").add({
+            actorUid,
+            actorEmail: req.auth?.token?.email ?? null,
+            action: "staff_account_provisioned",
+            target: user.uid,
+            meta: { email, role, branchSlug, hasPhone: !!phone },
+            at: now,
+        });
+        return {
+            ok: true,
+            uid: user.uid,
+            email,
+            role,
+            branchSlug,
+            tempPassword,
+            resetLink,
+        };
+    }
+    catch (err) {
+        if (createdUid) {
+            await auth.deleteUser(createdUid).catch(() => undefined);
+            await db.doc(`users/${createdUid}`).delete().catch(() => undefined);
+            await db.doc(`staffAccounts/${createdUid}`).delete().catch(() => undefined);
+        }
+        if (err?.code === "auth/email-already-exists") {
+            throw new https_1.HttpsError("already-exists", "A user with that email already exists.");
+        }
+        if (err instanceof https_1.HttpsError)
+            throw err;
+        console.error("provisionStaffAccount failed", err);
+        throw new https_1.HttpsError("internal", "Failed to provision staff account.");
+    }
+});
+// ---------------------------------------------------------------------------
+// setDeveloperClaim — grant / revoke developer:true on a target uid.
+// Audit row is written by the caller via the auditLog function (Phase 2).
+// ---------------------------------------------------------------------------
+exports.setDeveloperClaim = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const actor = requireDeveloper(req);
+    const { targetUid, grant } = req.data;
+    if (!targetUid || typeof grant !== "boolean") {
+        throw new https_1.HttpsError("invalid-argument", "targetUid + grant required.");
+    }
+    if (targetUid === actor && !grant) {
+        throw new https_1.HttpsError("failed-precondition", "Cannot revoke your own claim from the portal — use the CLI.");
+    }
+    const auth = (0, auth_1.getAuth)();
+    const target = await auth.getUser(targetUid);
+    const existing = target.customClaims ?? {};
+    const next = { ...existing, developer: grant };
+    await auth.setCustomUserClaims(targetUid, next);
+    await (0, firestore_1.getFirestore)().doc(`staffAccounts/${targetUid}`).set({
+        developerClaimGrantedAt: grant ? firestore_1.FieldValue.serverTimestamp() : null,
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return { ok: true };
+});
+// ---------------------------------------------------------------------------
+// enrollTotp — generates a TOTP secret + otpauth URL on first setup.
+// The secret is stored in totpSecrets/{uid} which is *never* readable by any
+// client (Firestore rule denies all client access). Recovery codes are
+// returned once and only once; we store their bcrypt-style hashes.
+// ---------------------------------------------------------------------------
+exports.enrollTotp = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireDeveloper(req);
+    const userRecord = await (0, auth_1.getAuth)().getUser(uid);
+    const label = userRecord.email ?? uid;
+    const secret = otplib_1.authenticator.generateSecret();
+    const otpauthUrl = otplib_1.authenticator.keyuri(label, APP_NAME, secret);
+    const qrPng = await QRCode.toDataURL(otpauthUrl, { width: 256, margin: 1 });
+    // Single-use recovery codes (six 8-char codes). Hashed at rest.
+    const recovery = Array.from({ length: 6 }, () => Math.random().toString(36).slice(2, 10).toUpperCase());
+    const hashed = await Promise.all(recovery.map((c) => hashString(c)));
+    await (0, firestore_1.getFirestore)().doc(`totpSecrets/${uid}`).set({
+        secret,
+        recoveryHashes: hashed,
+        createdAt: firestore_1.FieldValue.serverTimestamp(),
+    });
+    await (0, firestore_1.getFirestore)().doc(`staffAccounts/${uid}`).set({ mfaEnrolled: true, updatedAt: firestore_1.FieldValue.serverTimestamp() }, { merge: true });
+    return { otpauthUrl, qrPng, recoveryCodes: recovery };
+});
+// ---------------------------------------------------------------------------
+// verifyTotp — checks a 6-digit code (or recovery code) against the stored
+// secret. On success, sets a short-lived `mfaVerifiedAt` on the user's
+// session doc so the client-side gate knows MFA passed for this login.
+// ---------------------------------------------------------------------------
+exports.verifyTotp = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireDeveloper(req);
+    const { code } = req.data;
+    if (!code || typeof code !== "string") {
+        throw new https_1.HttpsError("invalid-argument", "code required.");
+    }
+    const snap = await (0, firestore_1.getFirestore)().doc(`totpSecrets/${uid}`).get();
+    if (!snap.exists) {
+        throw new https_1.HttpsError("failed-precondition", "TOTP not enrolled.");
+    }
+    const data = snap.data();
+    let ok = false;
+    let usedRecoveryIndex = -1;
+    if (/^\d{6}$/.test(code)) {
+        ok = otplib_1.authenticator.verify({ token: code, secret: data.secret });
+    }
+    else {
+        const hash = await hashString(code.toUpperCase());
+        usedRecoveryIndex = data.recoveryHashes.indexOf(hash);
+        ok = usedRecoveryIndex >= 0;
+    }
+    if (!ok)
+        throw new https_1.HttpsError("permission-denied", "Invalid code.");
+    // Burn the recovery code once used.
+    if (usedRecoveryIndex >= 0) {
+        const next = [...data.recoveryHashes];
+        next.splice(usedRecoveryIndex, 1);
+        await snap.ref.update({ recoveryHashes: next });
+    }
+    await (0, firestore_1.getFirestore)().doc(`staffSessions/${uid}`).set({ mfaVerifiedAt: firestore_1.FieldValue.serverTimestamp() }, { merge: true });
+    return { ok: true };
+});
+// SHA-256 hex; recovery codes are short and high-entropy so a salt isn't
+// load-bearing here — we just don't want them stored verbatim.
+async function hashString(input) {
+    const { createHash } = await Promise.resolve().then(() => __importStar(require("node:crypto")));
+    return createHash("sha256").update(input).digest("hex");
+}
+// ---------------------------------------------------------------------------
+// auditLog — single sink for every portal action. Writes an immutable row to
+// /auditLog (rules deny all client writes) and mirrors to the `audit-log`
+// Pub/Sub topic so a BigQuery sink can land the same row in a tamper-resistant
+// warehouse. The Pub/Sub publish is best-effort — Firestore is the source of
+// truth for the in-app UI; BigQuery is for retention + offline analysis.
+// ---------------------------------------------------------------------------
+exports.auditLog = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireDeveloper(req);
+    const { action, target, meta } = req.data;
+    if (!action || typeof action !== "string") {
+        throw new https_1.HttpsError("invalid-argument", "action required.");
+    }
+    const row = {
+        actorUid: uid,
+        actorEmail: req.auth?.token?.email ?? null,
+        action,
+        target: target ?? null,
+        meta: meta ?? null,
+        ip: req.rawRequest.ip ?? null,
+        userAgent: req.rawRequest.headers["user-agent"] ?? null,
+        at: firestore_1.FieldValue.serverTimestamp(),
+    };
+    const ref = await (0, firestore_1.getFirestore)().collection("auditLogs").add(row);
+    // Best-effort mirror to Pub/Sub. Failure here must not block the audit
+    // row itself — Firestore is authoritative for the in-portal view.
+    try {
+        const { PubSub } = await Promise.resolve().then(() => __importStar(require("@google-cloud/pubsub")));
+        await new PubSub().topic("audit-log").publishMessage({
+            json: { id: ref.id, ...row, at: new Date().toISOString() },
+        });
+    }
+    catch (err) {
+        console.warn("audit pubsub publish failed", err);
+    }
+    return { ok: true, id: ref.id };
+});
+// ---------------------------------------------------------------------------
+// setFeatureFlag — flips a boolean inside featureFlags/global. Used for kill
+// switches (checkout, orders, maintenance banner). Every change is mirrored
+// to auditLog by the caller — but we also write actor info onto the doc so
+// the portal can show "last changed by" inline without a join.
+// ---------------------------------------------------------------------------
+exports.setFeatureFlag = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireDeveloper(req);
+    const { key, value } = req.data;
+    if (!key || typeof value !== "boolean") {
+        throw new https_1.HttpsError("invalid-argument", "key + boolean value required.");
+    }
+    await (0, firestore_1.getFirestore)().doc("featureFlags/global").set({
+        [key]: value,
+        [`${key}__updatedBy`]: uid,
+        [`${key}__updatedAt`]: firestore_1.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return { ok: true };
+});
+// ---------------------------------------------------------------------------
+// forceSignOut — revokes a target user's refresh tokens. Their existing ID
+// tokens stay valid until expiry (≤1h), then every API call forces re-auth.
+// Used when a staff account is suspected compromised, or on offboarding.
+// ---------------------------------------------------------------------------
+exports.forceSignOut = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    requireDeveloper(req);
+    const { targetUid } = req.data;
+    if (!targetUid)
+        throw new https_1.HttpsError("invalid-argument", "targetUid required.");
+    await (0, auth_1.getAuth)().revokeRefreshTokens(targetUid);
+    await (0, firestore_1.getFirestore)().doc(`staffSessions/${targetUid}`).set({ revokedAt: firestore_1.FieldValue.serverTimestamp(), mfaVerifiedAt: null }, { merge: true });
+    return { ok: true };
+});

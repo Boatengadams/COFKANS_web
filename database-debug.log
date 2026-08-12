@@ -1,0 +1,17 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by io.netty.util.internal.NativeLibraryUtil in an unnamed module (file:/home/kali/.cache/firebase/emulators/firebase-database-emulator-v4.11.2.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by akka.util.Unsafe (file:/home/kali/.cache/firebase/emulators/firebase-database-emulator-v4.11.2.jar)
+WARNING: Please consider reporting this to the maintainers of class akka.util.Unsafe
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+12:51:07.054 [NamespaceSystem-akka.actor.default-dispatcher-6] INFO akka.event.slf4j.Slf4jLogger - Slf4jLogger started
+12:51:07.364 [main] INFO com.firebase.server.forge.App$ - Listening at 127.0.0.1:9000
+12:51:24.717 [NamespaceSystem-akka.actor.default-dispatcher-6] INFO com.firebase.core.namespace.NamespaceActor - cofkans-staging-default-rtdb successfully activated FBKV (SurveyIdle(0)) wait: 220ms, init: 0ms
+12:51:24.881 [NamespaceSystem-blocking-namespace-operation-dispatcher-8] INFO com.firebase.core.namespace.StateManager - Namespace cofkans-staging-default-rtdb status Active to Active
+12:51:25.473 [Thread-0] INFO com.firebase.server.forge.App$ - Attempting graceful shutdown.
+12:51:25.481 [NamespaceSystem-akka.actor.default-dispatcher-7] INFO com.firebase.core.namespace.Terminator$Terminator - 1 actors left to terminate: cofkans-staging-default-rtdb
+12:51:25.498 [NamespaceSystem-akka.actor.default-dispatcher-9] INFO com.firebase.core.namespace.NamespaceActor - stopped namespace actor for cofkans-staging-default-rtdb
+12:51:25.515 [Thread-0] INFO com.firebase.server.forge.App$ - Graceful shutdown complete.

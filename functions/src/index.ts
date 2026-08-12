@@ -1,0 +1,1241 @@
+/**
+ * Developer-portal Cloud Functions.
+ *
+ * All three functions sit *behind* the Cloudflare WAF IP gate that protects
+ * /developer-portal, but each one also independently checks the caller's
+ * developer custom claim. Defence in depth: a leaked client trick or
+ * misconfigured WAF rule still cannot escalate privilege.
+ *
+ * Exposed callables:
+ *   setDeveloperClaim   grant / revoke `developer:true` on a target uid
+ *   enrollTotp          generate a TOTP secret + otpauth URL for first-time setup
+ *   verifyTotp          validate a 6-digit code against the stored secret
+ *
+ * Bootstrap chicken-and-egg: the very first developer claim is granted by
+ * running `firebase functions:shell` (or the gcloud CLI) once against your
+ * own uid. After that the portal manages itself.
+ */
+
+import {onCall, onRequest, HttpsError, type CallableRequest} from "firebase-functions/v2/https";
+import {defineSecret} from "firebase-functions/params";
+import {initializeApp} from "firebase-admin/app";
+import {getAuth} from "firebase-admin/auth";
+import {getFirestore, FieldValue} from "firebase-admin/firestore";
+import {authenticator} from "otplib";
+import * as QRCode from "qrcode";
+import {createHmac, randomBytes, timingSafeEqual} from "node:crypto";
+
+initializeApp();
+
+const paystackSecretKey = defineSecret("PAYSTACK_SECRET_KEY");
+
+// 30s step + ±1 window = ~90s tolerance for clock drift.
+authenticator.options = {window: 1, step: 30};
+
+const APP_NAME = "Cofkans Electricals";
+const COMPANY_DOMAIN = "@cofkanselectricals.com";
+const STAFF_ROLES = new Set([
+  "admin",
+  "customer",
+  "manager",
+  "developer",
+  "branch_manager",
+  "front_desk",
+  "branch_desk",
+  "rider",
+  "driver",
+  "technician",
+  "warehouse",
+  "accountant",
+  "hr",
+  "procurement",
+  "marketing",
+  "management_support",
+  "support_agent",
+]);
+
+const BRANCH_ORDER_STATUSES = new Set([
+  "pending",
+  "confirmed",
+  "preparing",
+  "ready",
+  "out_for_delivery",
+  "completed",
+  "cancelled",
+]);
+
+const STOCK_TRANSFER_STATUSES = new Set(["pending", "in_transit", "delivered", "cancelled"]);
+
+function requireDeveloper(req: CallableRequest): string {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign-in required.");
+  if (req.auth?.token?.developer !== true) {
+    throw new HttpsError("permission-denied", "Developer claim required.");
+  }
+  return uid;
+}
+
+function requireStaffProvisioner(req: CallableRequest): string {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign-in required.");
+  if (req.auth?.token?.staff !== true) {
+    throw new HttpsError("permission-denied", "Staff claim required.");
+  }
+  const role = req.auth?.token?.role;
+  if (role !== "manager" && role !== "developer") {
+    throw new HttpsError("permission-denied", "Manager or developer role required.");
+  }
+  return uid;
+}
+
+function requireStaff(req: CallableRequest, roles: string[]): string {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign-in required.");
+  if (req.auth?.token?.staff !== true && req.auth?.token?.developer !== true) {
+    throw new HttpsError("permission-denied", "Staff access required.");
+  }
+  const role = typeof req.auth?.token?.role === "string" ? req.auth.token.role : "";
+  if (req.auth?.token?.developer !== true && !roles.includes(role)) {
+    throw new HttpsError("permission-denied", "Insufficient staff role.");
+  }
+  return uid;
+}
+
+function cleanString(value: unknown, field: string, max: number): string {
+  if (typeof value !== "string") {
+    throw new HttpsError("invalid-argument", `${field} must be a string.`);
+  }
+  const cleaned = value.trim();
+  if (!cleaned || cleaned.length > max) {
+    throw new HttpsError("invalid-argument", `${field} is required and must be ${max} characters or fewer.`);
+  }
+  return cleaned;
+}
+
+function optionalCleanString(value: unknown, field: string, max: number): string | null {
+  if (value == null || value === "") return null;
+  return cleanString(value, field, max);
+}
+
+function normalizeEmail(value: unknown): string {
+  const email = cleanString(value, "email", 254).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpsError("invalid-argument", "A valid email is required.");
+  }
+  if (!email.endsWith(COMPANY_DOMAIN)) {
+    throw new HttpsError("permission-denied", `Staff email must use ${COMPANY_DOMAIN}.`);
+  }
+  return email;
+}
+
+function normalizeRole(value: unknown): string {
+  const role = cleanString(value, "role", 64);
+  if (!STAFF_ROLES.has(role)) {
+    throw new HttpsError("invalid-argument", "Unsupported staff role.");
+  }
+  return role;
+}
+
+function cleanNumber(value: unknown, field: string, opts: {min: number; max: number; int?: boolean}): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new HttpsError("invalid-argument", `${field} must be a number.`);
+  }
+  if (opts.int && !Number.isInteger(value)) {
+    throw new HttpsError("invalid-argument", `${field} must be a whole number.`);
+  }
+  if (value < opts.min || value > opts.max) {
+    throw new HttpsError("invalid-argument", `${field} is out of range.`);
+  }
+  return value;
+}
+
+function optionalUrl(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  const text = cleanString(value, "image", 1000);
+  return /^https?:\/\//.test(text) || text.startsWith("/") ? text : "";
+}
+
+function cleanCheckoutAddress(value: unknown) {
+  if (!value || typeof value !== "object") {
+    throw new HttpsError("invalid-argument", "shippingAddress is required.");
+  }
+  const data = value as Record<string, unknown>;
+  const email = cleanString(data.email, "email", 254).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpsError("invalid-argument", "A valid email is required.");
+  }
+  return {
+    fullName: cleanString(data.fullName, "fullName", 120),
+    phone: cleanString(data.phone, "phone", 32),
+    email,
+    region: cleanString(data.region, "region", 80),
+    city: cleanString(data.city, "city", 80),
+    street: cleanString(data.street, "street", 240),
+    postalCode: optionalCleanString(data.postalCode, "postalCode", 32) ?? "",
+    additionalInfo: optionalCleanString(data.additionalInfo, "additionalInfo", 500) ?? "",
+  };
+}
+
+function cleanCheckoutItems(value: unknown): Array<{productId: string; variantId: string | null; quantity: number}> {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
+    throw new HttpsError("invalid-argument", "Order must include 1-100 items.");
+  }
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new HttpsError("invalid-argument", `items.${index} is invalid.`);
+    }
+    const data = item as Record<string, unknown>;
+    return {
+      productId: cleanString(data.productId, `items.${index}.productId`, 160),
+      variantId: optionalCleanString(data.variantId, `items.${index}.variantId`, 160),
+      quantity: cleanNumber(data.quantity, `items.${index}.quantity`, {min: 1, max: 99, int: true}),
+    };
+  });
+}
+
+function generateTempPassword(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const bytes = randomBytes(18);
+  let out = "";
+  for (const byte of bytes) out += chars[byte % chars.length];
+  return `${out}!9`;
+}
+
+function getPaystackSignature(req: {header(name: string): string | undefined}): string {
+  const header = req.header("x-paystack-signature");
+  return typeof header === "string" ? header.trim() : "";
+}
+
+function hasValidPaystackSignature(rawBody: Buffer, signature: string, secretKey: string): boolean {
+  if (!signature) return false;
+  const expected = createHmac("sha512", secretKey).update(rawBody).digest("hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const actualBuffer = Buffer.from(signature, "hex");
+  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
+function extractPaystackReference(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const data = (body as {data?: unknown}).data;
+  if (!data || typeof data !== "object") return null;
+  const reference = (data as {reference?: unknown}).reference;
+  return typeof reference === "string" && reference.trim() ? reference.trim() : null;
+}
+
+function requireCustomer(req: CallableRequest): string {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign-in required.");
+  return uid;
+}
+
+function getPaystackSecretKey(): string {
+  const secretKey = paystackSecretKey.value() || process.env.PAYSTACK_SECRET_KEY;
+  if (!secretKey) {
+    throw new HttpsError("failed-precondition", "Paystack secret key is not configured.");
+  }
+  return secretKey;
+}
+
+function getPaystackPublicKey(): string {
+  const publicKey = process.env.PAYSTACK_PUBLIC_KEY;
+  if (!publicKey || !publicKey.startsWith("pk_")) {
+    throw new HttpsError("failed-precondition", "Paystack public key is not configured.");
+  }
+  return publicKey;
+}
+
+function normalizeAmountPesewas(total: unknown): number {
+  if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) {
+    throw new HttpsError("failed-precondition", "Order has an invalid total.");
+  }
+  return Math.round(total * 100);
+}
+
+function normalizePaystackReference(value: unknown): string {
+  const reference = cleanString(value, "reference", 120);
+  if (!/^[A-Za-z0-9._=-]+$/.test(reference)) {
+    throw new HttpsError("invalid-argument", "Invalid Paystack reference.");
+  }
+  return reference;
+}
+
+function newPaystackReference(orderId: string): string {
+  const suffix = randomBytes(5).toString("hex").toUpperCase();
+  return `CFK-${Date.now()}-${orderId.slice(-6).toUpperCase()}-${suffix}`;
+}
+
+async function initializePaystackTransaction(input: {
+  secretKey: string;
+  email: string;
+  amount: number;
+  reference: string;
+  callbackUrl?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const res = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.secretKey}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      email: input.email,
+      amount: input.amount,
+      currency: "GHS",
+      reference: input.reference,
+      callback_url: input.callbackUrl ?? undefined,
+      metadata: input.metadata ?? {},
+    }),
+  });
+  const text = await res.text();
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Paystack initialize returned non-JSON response (${res.status})`);
+  }
+  if (!res.ok || json?.status !== true) {
+    throw new Error(`Paystack initialize failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`);
+  }
+  return json as {
+    status: true;
+    data: {
+      authorization_url?: string;
+      access_code?: string;
+      reference: string;
+    };
+  };
+}
+
+async function verifyPaystackTransaction(reference: string, secretKey: string) {
+  const res = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${secretKey}`,
+      accept: "application/json",
+    },
+  });
+  const text = await res.text();
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Paystack verify returned non-JSON response (${res.status})`);
+  }
+  if (!res.ok) {
+    throw new Error(`Paystack verify failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`);
+  }
+  return json as {
+    status?: boolean;
+    data?: {
+      status?: string;
+      reference?: string;
+      amount?: number;
+      currency?: string;
+      id?: number;
+      paid_at?: string;
+      channel?: string;
+      gateway_response?: string;
+    };
+  };
+}
+
+async function markOrderPaidFromPaystack(reference: string, data: {
+  status?: string;
+  reference?: string;
+  amount?: number;
+  currency?: string;
+  id?: number;
+  paid_at?: string;
+  channel?: string;
+  gateway_response?: string;
+}) {
+  if (data.status !== "success" || data.reference !== reference) {
+    return {processed: false, result: "not_success"};
+  }
+
+  const db = getFirestore();
+  const orders = await db.collection("orders").where("paymentReference", "==", reference).limit(1).get();
+  if (orders.empty) return {processed: false, result: "order_not_found"};
+
+  const orderRef = orders.docs[0].ref;
+  const result = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists) return "missing";
+
+    const order = snap.data() as {
+      paymentStatus?: string;
+      total?: number;
+      items?: Array<{productId?: string; quantity?: number}>;
+    };
+    if (order.paymentStatus === "paid") return "already_paid";
+
+    const expectedAmount = normalizeAmountPesewas(order.total);
+    if (data.amount !== expectedAmount || data.currency !== "GHS") {
+      console.warn("paystack amount/currency mismatch", {
+        reference,
+        expectedAmount,
+        verifiedAmount: data.amount,
+        verifiedCurrency: data.currency,
+      });
+      return "amount_or_currency_mismatch";
+    }
+
+    // Decrement stock for each ordered item inside the same transaction.
+    // This prevents oversell (race conditions) by validating available
+    // inventory and decrementing atomically when payment is confirmed.
+    if (Array.isArray(order.items)) {
+      for (const it of order.items) {
+        if (!it || !it.productId) continue;
+        const productRef = db.collection('products').doc(it.productId);
+        const productSnap = await tx.get(productRef);
+        if (!productSnap.exists) {
+          console.warn('markOrderPaid: product missing', it.productId);
+          return 'product_missing';
+        }
+        const product = productSnap.data() as { totalStock?: number; status?: string };
+        const available = typeof product.totalStock === 'number' ? product.totalStock : 0;
+        const qty = typeof it.quantity === 'number' ? it.quantity : 0;
+        if (available < qty) {
+          console.warn('markOrderPaid: insufficient stock', {productId: it.productId, available, qty});
+          return 'insufficient_stock';
+        }
+        // Decrement stock
+        tx.update(productRef, {
+          totalStock: FieldValue.increment(-qty),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    }
+
+    tx.update(orderRef, {
+      paymentStatus: "paid",
+      status: "confirmed",
+      paymentProvider: "paystack",
+      transactionId: data.id ? String(data.id) : null,
+      transactionReference: reference,
+      paystackVerified: true,
+      paystackTransactionId: data.id ?? null,
+      paystackReference: reference,
+      paystackAmount: data.amount ?? null,
+      paystackCurrency: data.currency ?? null,
+      paystackChannel: data.channel ?? null,
+      paystackGatewayResponse: data.gateway_response ?? null,
+      paidAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      "statusTimeline.confirmed": FieldValue.serverTimestamp(),
+    });
+    return "marked_paid";
+  });
+
+  return {processed: result === "marked_paid" || result === "already_paid", result};
+}
+
+// ---------------------------------------------------------------------------
+// createCheckoutOrder — server-authoritative order creation.
+// The client sends product ids, quantities, fulfillment, and contact details.
+// The server reads product prices/stock, computes totals, and writes the order.
+// ---------------------------------------------------------------------------
+export const createCheckoutOrder = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireCustomer(req);
+    if (req.auth?.token?.email_verified !== true && !req.auth?.token?.phone_number) {
+      throw new HttpsError("permission-denied", "Verified account required to place an order.");
+    }
+
+    const items = cleanCheckoutItems(req.data?.items);
+    const shippingAddress = cleanCheckoutAddress(req.data?.shippingAddress);
+    const fulfillment = req.data?.fulfillment && typeof req.data.fulfillment === "object" ?
+      req.data.fulfillment as Record<string, unknown> : {};
+    const fulfillmentType = cleanString(fulfillment.type, "fulfillment.type", 20);
+    if (fulfillmentType !== "pickup" && fulfillmentType !== "delivery") {
+      throw new HttpsError("invalid-argument", "Unsupported fulfillment type.");
+    }
+    const branchSlug = cleanString(fulfillment.branchSlug, "fulfillment.branchSlug", 120);
+    const scheduledDate = optionalCleanString(fulfillment.scheduledDate, "fulfillment.scheduledDate", 20);
+    const deliveryFee = fulfillmentType === "pickup" ? 0 : 50;
+
+    const db = getFirestore();
+    const productRefs = items.map((item) => db.doc(`products/${item.productId}`));
+    const orderRef = db.collection("orders").doc();
+    const now = FieldValue.serverTimestamp();
+
+    const result = await db.runTransaction(async (tx) => {
+      const productSnaps = await Promise.all(productRefs.map((ref) => tx.get(ref)));
+      let subtotal = 0;
+      const orderItems = items.map((item, index) => {
+        const snap = productSnaps[index];
+        if (!snap.exists) {
+          throw new HttpsError("failed-precondition", "A product in your cart is no longer available.");
+        }
+        const product = snap.data() as {
+          sku?: string;
+          name?: string;
+          image?: string;
+          images?: Array<{url?: string}>;
+          price?: number;
+          status?: string;
+          isAvailable?: boolean;
+          totalStock?: number;
+          description?: string;
+          specs?: Record<string, string>;
+        };
+        const price = cleanNumber(product.price, "product.price", {min: 0.01, max: 1000000});
+        const totalStock = typeof product.totalStock === "number" ? product.totalStock : 0;
+        if (product.status !== "active" || product.isAvailable === false || totalStock < item.quantity) {
+          throw new HttpsError("failed-precondition", `${product.name ?? "Product"} is out of stock.`);
+        }
+        const lineSubtotal = Number((price * item.quantity).toFixed(2));
+        subtotal = Number((subtotal + lineSubtotal).toFixed(2));
+        const primaryImage = product.image || product.images?.find((img) => img?.url)?.url || "";
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          sku: product.sku ?? "",
+          name: product.name ?? "Product",
+          image: optionalUrl(primaryImage) ?? "",
+          price,
+          quantity: item.quantity,
+          subtotal: lineSubtotal,
+          taxAmount: 0,
+          productSnapshot: {
+            name: product.name ?? "Product",
+            price,
+            description: product.description ?? "",
+            specs: product.specs ?? {},
+          },
+        };
+      });
+
+      const total = Number((subtotal + deliveryFee).toFixed(2));
+      const orderNumber = `ORD-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+      const itemCount = orderItems.reduce((sum, item) => sum + item.quantity, 0);
+
+      tx.set(orderRef, {
+        id: orderRef.id,
+        orderNumber,
+        userId: uid,
+        userEmail: req.auth?.token?.email ?? shippingAddress.email,
+        customerEmail: req.auth?.token?.email ?? shippingAddress.email,
+        customerName: shippingAddress.fullName,
+        customerPhone: shippingAddress.phone,
+        items: orderItems,
+        itemCount,
+        shippingAddress,
+        subtotal,
+        taxAmount: 0,
+        shippingAmount: deliveryFee,
+        discountAmount: 0,
+        total,
+        currency: "GHS",
+        paymentMethod: "paystack",
+        paymentProvider: "paystack",
+        paymentStatus: "pending",
+        transactionId: null,
+        transactionReference: null,
+        paidAt: null,
+        status: "pending",
+        fulfillmentType,
+        branchSlug,
+        scheduledDate,
+        deliveryMethod: fulfillmentType === "pickup" ? "pickup" : "standard",
+        statusTimeline: {pending: now},
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      return {orderId: orderRef.id, orderNumber, subtotal, taxAmount: 0, shippingAmount: deliveryFee, total};
+    });
+
+    return result;
+  }
+);
+
+export const updateOrderFulfillment = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "branch_manager", "front_desk", "branch_desk", "rider", "driver"]);
+    const role = typeof req.auth?.token?.role === "string" ? req.auth.token.role : "";
+    const branchClaim = typeof req.auth?.token?.branchSlug === "string" ? req.auth.token.branchSlug : null;
+    const orderId = cleanString(req.data?.orderId, "orderId", 160);
+    const status = cleanString(req.data?.status, "status", 40);
+    if (!BRANCH_ORDER_STATUSES.has(status)) throw new HttpsError("invalid-argument", "Invalid order status.");
+
+    const db = getFirestore();
+    const orderRef = db.doc(`orders/${orderId}`);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(orderRef);
+      if (!snap.exists) throw new HttpsError("not-found", "Order not found.");
+      const order = snap.data() as {branchSlug?: string; driverId?: string | null; status?: string; fulfillmentType?: string};
+      const canGlobal = req.auth?.token?.developer === true || role === "admin" || role === "manager";
+      const canBranch = branchClaim && order.branchSlug === branchClaim && ["branch_manager", "front_desk", "branch_desk"].includes(role);
+      const canRider = branchClaim && order.branchSlug === branchClaim && ["rider", "driver"].includes(role);
+      if (!canGlobal && !canBranch && !canRider) {
+        throw new HttpsError("permission-denied", "You cannot update this order.");
+      }
+      const patch: Record<string, unknown> = {
+        status,
+        updatedAt: FieldValue.serverTimestamp(),
+        lastUpdatedBy: uid,
+        [`statusTimeline.${status}`]: FieldValue.serverTimestamp(),
+      };
+      if (status === "out_for_delivery" && canRider) {
+        patch.driverId = uid;
+        patch.driverName = req.auth?.token?.name ?? null;
+      }
+      if (status === "completed") patch.deliveredAt = FieldValue.serverTimestamp();
+      tx.update(orderRef, patch);
+    });
+    return {ok: true};
+  }
+);
+
+export const setUserRole = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const actorUid = requireDeveloper(req);
+    const targetUid = cleanString(req.data?.targetUid, "targetUid", 160);
+    const role = normalizeRole(req.data?.role);
+    const branchSlug = optionalCleanString(req.data?.branchSlug, "branchSlug", 120);
+    if (role === "developer") {
+      throw new HttpsError("invalid-argument", "Use setDeveloperClaim for developer access.");
+    }
+    const auth = getAuth();
+    const db = getFirestore();
+    await auth.setCustomUserClaims(targetUid, {
+      role,
+      branchSlug,
+      staff: role !== "customer",
+    });
+    await db.doc(`users/${targetUid}`).set({
+      role,
+      isDeveloper: false,
+      promotedBy: actorUid,
+      promotedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
+    if (role === "customer") {
+      await db.doc(`staffAccounts/${targetUid}`).set({active: false, revokedAt: FieldValue.serverTimestamp()}, {merge: true});
+    }
+    await db.collection("auditLogs").add({
+      action: "set_user_role",
+      actorUid,
+      targetUid,
+      role,
+      branchSlug,
+      at: FieldValue.serverTimestamp(),
+    });
+    return {ok: true};
+  }
+);
+
+export const createStockTransfer = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "branch_manager", "front_desk", "branch_desk", "warehouse"]);
+    const fromBranch = cleanString(req.data?.fromBranch, "fromBranch", 120);
+    const toBranch = cleanString(req.data?.toBranch, "toBranch", 120);
+    const items = cleanCheckoutItems(req.data?.items).map((item) => ({
+      productId: item.productId,
+      name: optionalCleanString((req.data?.items as Array<Record<string, unknown>>)?.find((x) => x?.productId === item.productId)?.name, "name", 200) ?? "Stock item",
+      quantity: item.quantity,
+    }));
+    const db = getFirestore();
+    const ref = await db.collection("stockTransfers").add({
+      fromBranch,
+      toBranch,
+      items,
+      status: "pending",
+      driverId: null,
+      createdBy: uid,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return {id: ref.id};
+  }
+);
+
+export const updateStockTransfer = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "front_desk", "branch_desk", "warehouse", "rider", "driver"]);
+    const transferId = cleanString(req.data?.transferId, "transferId", 160);
+    const status = cleanString(req.data?.status, "status", 40);
+    if (!STOCK_TRANSFER_STATUSES.has(status)) throw new HttpsError("invalid-argument", "Invalid transfer status.");
+    const db = getFirestore();
+    await db.runTransaction(async (tx) => {
+      const ref = db.doc(`stockTransfers/${transferId}`);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new HttpsError("not-found", "Transfer not found.");
+      const current = snap.data() as {status?: string; driverId?: string | null};
+      if (current.status === "delivered") throw new HttpsError("failed-precondition", "Transfer is already delivered.");
+      const patch: Record<string, unknown> = {
+        status,
+        updatedAt: FieldValue.serverTimestamp(),
+        lastUpdatedBy: uid,
+      };
+      if (status === "in_transit") patch.driverId = uid;
+      if (status === "delivered") patch.deliveredAt = FieldValue.serverTimestamp();
+      tx.update(ref, patch);
+    });
+    return {ok: true};
+  }
+);
+
+export const resolveStockRequest = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireStaff(req, ["admin", "manager", "front_desk", "branch_desk", "warehouse"]);
+    const requestId = cleanString(req.data?.requestId, "requestId", 160);
+    const decision = cleanString(req.data?.decision, "decision", 20);
+    if (decision !== "approved" && decision !== "declined") throw new HttpsError("invalid-argument", "Invalid decision.");
+    const db = getFirestore();
+    let transferId: string | null = null;
+    await db.runTransaction(async (tx) => {
+      const requestRef = db.doc(`stockRequests/${requestId}`);
+      const requestSnap = await tx.get(requestRef);
+      if (!requestSnap.exists) throw new HttpsError("not-found", "Stock request not found.");
+      const data = requestSnap.data() as {
+        status?: string;
+        branchSlug?: string;
+        branchId?: string;
+        productId?: string;
+        productName?: string;
+        name?: string;
+        quantityRequested?: number;
+        quantity?: number;
+      };
+      if (data.status && data.status !== "pending") throw new HttpsError("failed-precondition", "Request already resolved.");
+      if (decision === "approved") {
+        const transferRef = db.collection("stockTransfers").doc();
+        transferId = transferRef.id;
+        tx.set(transferRef, {
+          fromBranch: "kumasi-asuoyeboa",
+          toBranch: data.branchSlug ?? data.branchId ?? "",
+          items: [{
+            productId: data.productId ?? requestId,
+            name: data.productName ?? data.name ?? "Stock item",
+            quantity: cleanNumber(data.quantityRequested ?? data.quantity ?? 1, "quantityRequested", {min: 1, max: 100000, int: true}),
+          }],
+          status: "pending",
+          driverId: null,
+          sourceRequestId: requestId,
+          createdBy: uid,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      tx.update(requestRef, {
+        status: decision,
+        resolvedBy: uid,
+        resolvedAt: FieldValue.serverTimestamp(),
+        ...(decision === "approved" ? {approvedAt: FieldValue.serverTimestamp(), transferId} : {declinedAt: FieldValue.serverTimestamp()}),
+      });
+    });
+    return {ok: true, transferId};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// initializePaystackPayment — creates a server-owned Paystack transaction for
+// an existing pending order. The client never supplies amount or secret data.
+// ---------------------------------------------------------------------------
+export const initializePaystackPayment = onCall(
+  {region: "us-central1", secrets: [paystackSecretKey]},
+  async (req) => {
+    const uid = requireCustomer(req);
+    const orderId = cleanString(req.data?.orderId, "orderId", 160);
+    const callbackUrl = optionalCleanString(req.data?.callbackUrl, "callbackUrl", 500);
+    const db = getFirestore();
+    const orderRef = db.doc(`orders/${orderId}`);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) {
+      throw new HttpsError("not-found", "Order not found.");
+    }
+
+    const order = orderSnap.data() as {
+      userId?: string;
+      paymentStatus?: string;
+      total?: number;
+      userEmail?: string;
+      shippingAddress?: {email?: unknown; fullName?: unknown; phone?: unknown; region?: unknown; city?: unknown};
+      paymentReference?: string;
+    };
+    if (order.userId !== uid) {
+      throw new HttpsError("permission-denied", "You can only initialize your own order payment.");
+    }
+    if (order.paymentStatus === "paid") {
+      throw new HttpsError("failed-precondition", "Order is already paid.");
+    }
+
+    const email = cleanString(order.shippingAddress?.email ?? order.userEmail, "email", 254).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new HttpsError("failed-precondition", "Order needs a valid customer email.");
+    }
+
+    const amount = normalizeAmountPesewas(order.total);
+    const reference = order.paymentReference || newPaystackReference(orderId);
+    const secretKey = getPaystackSecretKey();
+    const publicKey = getPaystackPublicKey();
+    const initialized = await initializePaystackTransaction({
+      secretKey,
+      email,
+      amount,
+      reference,
+      callbackUrl,
+      metadata: {
+        orderId,
+        userId: uid,
+        customerName: order.shippingAddress?.fullName ?? null,
+        customerPhone: order.shippingAddress?.phone ?? null,
+        region: order.shippingAddress?.region ?? null,
+        city: order.shippingAddress?.city ?? null,
+      },
+    });
+
+    await orderRef.set({
+      paymentMethod: "paystack",
+      paymentProvider: "paystack",
+      paymentStatus: "processing",
+      paymentReference: initialized.data.reference,
+      transactionReference: initialized.data.reference,
+      paystackAccessCode: initialized.data.access_code ?? null,
+      paystackAuthorizationUrl: initialized.data.authorization_url ?? null,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    return {
+      publicKey,
+      reference: initialized.data.reference,
+      accessCode: initialized.data.access_code ?? null,
+      authorizationUrl: initialized.data.authorization_url ?? null,
+      amount,
+      currency: "GHS",
+      email,
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// verifyPaystackPayment — customer-callable verification after popup success.
+// Webhook remains the primary async confirmation path; this closes the loop
+// immediately when the customer returns from Paystack.
+// ---------------------------------------------------------------------------
+export const verifyPaystackPayment = onCall(
+  {region: "us-central1", secrets: [paystackSecretKey]},
+  async (req) => {
+    const uid = requireCustomer(req);
+    const reference = normalizePaystackReference(req.data?.reference);
+    const db = getFirestore();
+    const orders = await db.collection("orders").where("paymentReference", "==", reference).limit(1).get();
+    if (orders.empty) {
+      throw new HttpsError("not-found", "Order not found for payment reference.");
+    }
+    const order = orders.docs[0].data() as {userId?: string};
+    if (order.userId !== uid) {
+      throw new HttpsError("permission-denied", "You can only verify your own order payment.");
+    }
+
+    const verified = await verifyPaystackTransaction(reference, getPaystackSecretKey());
+    if (verified.status !== true || !verified.data) {
+      return {ok: true, processed: false, result: "verify_failed"};
+    }
+    const result = await markOrderPaidFromPaystack(reference, verified.data);
+    return {ok: true, ...result};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// paystackWebhook — authoritative payment confirmation endpoint.
+// The client only creates pending orders. This function verifies Paystack's
+// HMAC signature, re-checks the reference against Paystack's API, and marks
+// the matching Firestore order as paid in an idempotent transaction.
+// ---------------------------------------------------------------------------
+export const paystackWebhook = onRequest(
+  {region: "us-central1", secrets: [paystackSecretKey]},
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    const secretKey = paystackSecretKey.value() || process.env.PAYSTACK_SECRET_KEY;
+    if (!secretKey) {
+      console.error("paystackWebhook missing PAYSTACK_SECRET_KEY");
+      res.status(500).send("Webhook not configured");
+      return;
+    }
+
+    const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(JSON.stringify(req.body ?? {}));
+    const signature = getPaystackSignature(req);
+    if (!hasValidPaystackSignature(rawBody, signature, secretKey)) {
+      console.warn("paystackWebhook rejected invalid signature", {
+        hasSignature: Boolean(signature),
+        bodyLength: rawBody.length,
+      });
+      res.status(401).send("Invalid signature");
+      return;
+    }
+
+    const reference = extractPaystackReference(req.body);
+    if (!reference) {
+      console.warn("paystackWebhook missing transaction reference");
+      res.status(400).send("Missing reference");
+      return;
+    }
+
+    try {
+      const verified = await verifyPaystackTransaction(reference, secretKey);
+      const data = verified.data;
+      if (verified.status !== true || data?.status !== "success" || data.reference !== reference) {
+        console.warn("paystackWebhook verification did not pass", {
+          reference,
+          verifyStatus: verified.status,
+          transactionStatus: data?.status,
+          verifiedReference: data?.reference,
+        });
+        res.status(202).json({ok: true, processed: false});
+        return;
+      }
+
+      const result = await markOrderPaidFromPaystack(reference, data);
+      console.info("paystackWebhook processed", {reference, result});
+      res.status(200).json({ok: true, ...result});
+    } catch (err) {
+      console.error("paystackWebhook processing failed", {reference, err});
+      res.status(500).send("Webhook processing failed");
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// provisionStaffAccount — server-side staff account creation.
+// Only callers with custom claims {staff:true, role:'manager'|'developer'} may
+// create staff users. The temporary password/reset link are returned to the
+// caller for manual handoff; v1 never emails credentials automatically.
+// ---------------------------------------------------------------------------
+export const provisionStaffAccount = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const actorUid = requireStaffProvisioner(req);
+    const name = cleanString(req.data?.name, "name", 120);
+    const email = normalizeEmail(req.data?.email);
+    const role = normalizeRole(req.data?.role);
+    const branchSlug = optionalCleanString(req.data?.branchSlug, "branchSlug", 120);
+    const phone = optionalCleanString(req.data?.phone, "phone", 32);
+
+    if (["branch_manager", "front_desk", "branch_desk", "rider", "driver"].includes(role) && !branchSlug) {
+      throw new HttpsError("invalid-argument", "branchSlug is required for branch-scoped staff roles.");
+    }
+
+    const auth = getAuth();
+    const db = getFirestore();
+    const tempPassword = generateTempPassword();
+
+    let createdUid: string | null = null;
+    try {
+      const user = await auth.createUser({
+        email,
+        password: tempPassword,
+        displayName: name,
+        phoneNumber: phone ?? undefined,
+        emailVerified: false,
+        disabled: false,
+      });
+      createdUid = user.uid;
+
+      await auth.setCustomUserClaims(user.uid, {
+        role,
+        branchSlug,
+        staff: true,
+      });
+
+      const resetLink = await auth.generatePasswordResetLink(email);
+      const now = FieldValue.serverTimestamp();
+
+      await db.doc(`users/${user.uid}`).set({
+        uid: user.uid,
+        email,
+        displayName: name,
+        phoneNumber: phone,
+        photoURL: null,
+        provider: "email",
+        emailVerified: false,
+        role,
+        isDeveloper: role === "developer",
+        mustChangePassword: true,
+        createdBy: actorUid,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await db.doc(`staffAccounts/${user.uid}`).set({
+        uid: user.uid,
+        email,
+        displayName: name,
+        phone,
+        role,
+        branchSlug,
+        active: true,
+        mustResetPassword: true,
+        createdBy: actorUid,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await db.collection("auditLogs").add({
+        actorUid,
+        actorEmail: req.auth?.token?.email ?? null,
+        action: "staff_account_provisioned",
+        target: user.uid,
+        meta: {email, role, branchSlug, hasPhone: !!phone},
+        at: now,
+      });
+
+      return {
+        ok: true,
+        uid: user.uid,
+        email,
+        role,
+        branchSlug,
+        tempPassword,
+        resetLink,
+      };
+    } catch (err: any) {
+      if (createdUid) {
+        await auth.deleteUser(createdUid).catch(() => undefined);
+        await db.doc(`users/${createdUid}`).delete().catch(() => undefined);
+        await db.doc(`staffAccounts/${createdUid}`).delete().catch(() => undefined);
+      }
+      if (err?.code === "auth/email-already-exists") {
+        throw new HttpsError("already-exists", "A user with that email already exists.");
+      }
+      if (err instanceof HttpsError) throw err;
+      console.error("provisionStaffAccount failed", err);
+      throw new HttpsError("internal", "Failed to provision staff account.");
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// setDeveloperClaim — grant / revoke developer:true on a target uid.
+// Audit row is written by the caller via the auditLog function (Phase 2).
+// ---------------------------------------------------------------------------
+export const setDeveloperClaim = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const actor = requireDeveloper(req);
+    const {targetUid, grant} = req.data as {targetUid: string; grant: boolean};
+    if (!targetUid || typeof grant !== "boolean") {
+      throw new HttpsError("invalid-argument", "targetUid + grant required.");
+    }
+    if (targetUid === actor && !grant) {
+      throw new HttpsError("failed-precondition", "Cannot revoke your own claim from the portal — use the CLI.");
+    }
+
+    const auth = getAuth();
+    const target = await auth.getUser(targetUid);
+    const existing = target.customClaims ?? {};
+    const next = {...existing, developer: grant};
+    await auth.setCustomUserClaims(targetUid, next);
+
+    await getFirestore().doc(`staffAccounts/${targetUid}`).set(
+      {
+        developerClaimGrantedAt: grant ? FieldValue.serverTimestamp() : null,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      {merge: true}
+    );
+
+    return {ok: true};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// enrollTotp — generates a TOTP secret + otpauth URL on first setup.
+// The secret is stored in totpSecrets/{uid} which is *never* readable by any
+// client (Firestore rule denies all client access). Recovery codes are
+// returned once and only once; we store their bcrypt-style hashes.
+// ---------------------------------------------------------------------------
+export const enrollTotp = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireDeveloper(req);
+    const userRecord = await getAuth().getUser(uid);
+    const label = userRecord.email ?? uid;
+
+    const secret = authenticator.generateSecret();
+    const otpauthUrl = authenticator.keyuri(label, APP_NAME, secret);
+    const qrPng = await QRCode.toDataURL(otpauthUrl, {width: 256, margin: 1});
+
+    // Single-use recovery codes (six 8-char codes). Hashed at rest.
+    const recovery = Array.from({length: 6}, () =>
+      Math.random().toString(36).slice(2, 10).toUpperCase()
+    );
+    const hashed = await Promise.all(
+      recovery.map((c) => hashString(c))
+    );
+
+    await getFirestore().doc(`totpSecrets/${uid}`).set({
+      secret,
+      recoveryHashes: hashed,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    await getFirestore().doc(`staffAccounts/${uid}`).set(
+      {mfaEnrolled: true, updatedAt: FieldValue.serverTimestamp()},
+      {merge: true}
+    );
+
+    return {otpauthUrl, qrPng, recoveryCodes: recovery};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// verifyTotp — checks a 6-digit code (or recovery code) against the stored
+// secret. On success, sets a short-lived `mfaVerifiedAt` on the user's
+// session doc so the client-side gate knows MFA passed for this login.
+// ---------------------------------------------------------------------------
+export const verifyTotp = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireDeveloper(req);
+    const {code} = req.data as {code: string};
+    if (!code || typeof code !== "string") {
+      throw new HttpsError("invalid-argument", "code required.");
+    }
+
+    const snap = await getFirestore().doc(`totpSecrets/${uid}`).get();
+    if (!snap.exists) {
+      throw new HttpsError("failed-precondition", "TOTP not enrolled.");
+    }
+    const data = snap.data() as {secret: string; recoveryHashes: string[]};
+
+    let ok = false;
+    let usedRecoveryIndex = -1;
+    if (/^\d{6}$/.test(code)) {
+      ok = authenticator.verify({token: code, secret: data.secret});
+    } else {
+      const hash = await hashString(code.toUpperCase());
+      usedRecoveryIndex = data.recoveryHashes.indexOf(hash);
+      ok = usedRecoveryIndex >= 0;
+    }
+
+    if (!ok) throw new HttpsError("permission-denied", "Invalid code.");
+
+    // Burn the recovery code once used.
+    if (usedRecoveryIndex >= 0) {
+      const next = [...data.recoveryHashes];
+      next.splice(usedRecoveryIndex, 1);
+      await snap.ref.update({recoveryHashes: next});
+    }
+
+    await getFirestore().doc(`staffSessions/${uid}`).set(
+      {mfaVerifiedAt: FieldValue.serverTimestamp()},
+      {merge: true}
+    );
+
+    return {ok: true};
+  }
+);
+
+// SHA-256 hex; recovery codes are short and high-entropy so a salt isn't
+// load-bearing here — we just don't want them stored verbatim.
+async function hashString(input: string): Promise<string> {
+  const {createHash} = await import("node:crypto");
+  return createHash("sha256").update(input).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
+// auditLog — single sink for every portal action. Writes an immutable row to
+// /auditLog (rules deny all client writes) and mirrors to the `audit-log`
+// Pub/Sub topic so a BigQuery sink can land the same row in a tamper-resistant
+// warehouse. The Pub/Sub publish is best-effort — Firestore is the source of
+// truth for the in-app UI; BigQuery is for retention + offline analysis.
+// ---------------------------------------------------------------------------
+export const auditLog = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireDeveloper(req);
+    const {action, target, meta} = req.data as {
+      action: string;
+      target?: string;
+      meta?: Record<string, unknown>;
+    };
+    if (!action || typeof action !== "string") {
+      throw new HttpsError("invalid-argument", "action required.");
+    }
+
+    const row = {
+      actorUid: uid,
+      actorEmail: req.auth?.token?.email ?? null,
+      action,
+      target: target ?? null,
+      meta: meta ?? null,
+      ip: req.rawRequest.ip ?? null,
+      userAgent: req.rawRequest.headers["user-agent"] ?? null,
+      at: FieldValue.serverTimestamp(),
+    };
+    const ref = await getFirestore().collection("auditLogs").add(row);
+
+    // Best-effort mirror to Pub/Sub. Failure here must not block the audit
+    // row itself — Firestore is authoritative for the in-portal view.
+    try {
+      const {PubSub} = await import("@google-cloud/pubsub");
+      await new PubSub().topic("audit-log").publishMessage({
+        json: {id: ref.id, ...row, at: new Date().toISOString()},
+      });
+    } catch (err) {
+      console.warn("audit pubsub publish failed", err);
+    }
+
+    return {ok: true, id: ref.id};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// setFeatureFlag — flips a boolean inside featureFlags/global. Used for kill
+// switches (checkout, orders, maintenance banner). Every change is mirrored
+// to auditLog by the caller — but we also write actor info onto the doc so
+// the portal can show "last changed by" inline without a join.
+// ---------------------------------------------------------------------------
+export const setFeatureFlag = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireDeveloper(req);
+    const {key, value} = req.data as {key: string; value: boolean};
+    if (!key || typeof value !== "boolean") {
+      throw new HttpsError("invalid-argument", "key + boolean value required.");
+    }
+    await getFirestore().doc("featureFlags/global").set(
+      {
+        [key]: value,
+        [`${key}__updatedBy`]: uid,
+        [`${key}__updatedAt`]: FieldValue.serverTimestamp(),
+      },
+      {merge: true}
+    );
+    return {ok: true};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// forceSignOut — revokes a target user's refresh tokens. Their existing ID
+// tokens stay valid until expiry (≤1h), then every API call forces re-auth.
+// Used when a staff account is suspected compromised, or on offboarding.
+// ---------------------------------------------------------------------------
+export const forceSignOut = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    requireDeveloper(req);
+    const {targetUid} = req.data as {targetUid: string};
+    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid required.");
+    await getAuth().revokeRefreshTokens(targetUid);
+    await getFirestore().doc(`staffSessions/${targetUid}`).set(
+      {revokedAt: FieldValue.serverTimestamp(), mfaVerifiedAt: null},
+      {merge: true}
+    );
+    return {ok: true};
+  }
+);

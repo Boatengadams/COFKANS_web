@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "cofkans-staging",
+    "staging": "cofkans-staging",
+    "production": "cofkanselectricals-app"
+  }
+}

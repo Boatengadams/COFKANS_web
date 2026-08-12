@@ -1,0 +1,71 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // OWASP A03: File validation helper
+    function isValidImageType() {
+      return request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)');
+    }
+
+    function isValidFileSize(maxSizeMB) {
+      return request.resource.size < maxSizeMB * 1024 * 1024;
+    }
+
+    // Product images - public read, admin write with validation
+    match /products/{productId}/{allPaths=**} {
+      allow read: if true;
+
+      // OWASP A03 & A05: Validate file type and size
+      allow write: if request.auth != null &&
+                      firestore.get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+                      isValidImageType() &&
+                      isValidFileSize(10); // 10MB max
+    }
+
+    // User avatars - public read, owner write with validation
+    match /users/{userId}/avatar/{fileName} {
+      allow read: if true;
+
+      // OWASP A03: Strict validation on user uploads
+      allow write: if request.auth.uid == userId &&
+                      isValidImageType() &&
+                      isValidFileSize(5) && // 5MB max
+                      fileName.matches('^[a-zA-Z0-9_-]+\\.(jpg|jpeg|png|webp)$'); // Prevent path traversal
+    }
+
+    // Review images - public read, verified users write with validation
+    match /reviews/{reviewId}/{fileName} {
+      allow read: if true;
+
+      // OWASP A03 & A07: Email verified users only, strict validation
+      allow write: if request.auth != null &&
+                      request.auth.token.email_verified == true &&
+                      isValidImageType() &&
+                      isValidFileSize(10) && // 10MB max
+                      fileName.matches('^[a-zA-Z0-9_-]+\\.(jpg|jpeg|png|webp)$');
+    }
+
+    // Delivery proof (signature, photos) - restricted access with validation
+    match /deliveries/{deliveryId}/proof/{fileName} {
+      allow read: if request.auth != null;
+
+      // OWASP A01: Only assigned driver or admin can upload
+      allow write: if request.auth != null &&
+                      isValidImageType() &&
+                      isValidFileSize(10) &&
+                      (firestore.get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.driverId == request.auth.uid ||
+                       firestore.get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    // Service request attachments with validation
+    match /serviceRequests/{requestId}/{fileName} {
+      allow read: if request.auth != null;
+
+      // OWASP A03: Strict file validation
+      allow write: if request.auth != null &&
+                      isValidImageType() &&
+                      isValidFileSize(20) && // 20MB max
+                      fileName.matches('^[a-zA-Z0-9_-]+\\.(jpg|jpeg|png|webp|pdf)$');
+    }
+  }
+}

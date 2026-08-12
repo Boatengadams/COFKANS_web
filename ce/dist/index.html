@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="shortcut icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <link rel="icon" sizes="192x192" href="/favicon.png" />
+    <link rel="icon" sizes="512x512" href="/favicon.png" />
+
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="Cofkans Electricals - Ghana's premier electrical supplies and smart home solutions provider. Quality products, expert service." />
+    <meta name="keywords" content="electrical supplies ghana, lighting, smart home, solar, industrial electrical, cofkans" />
+    <meta name="author" content="Cofkans Electricals" />
+
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="Cofkans Electricals - Premium Electrical Solutions" />
+    <meta property="og:description" content="Ghana's premier electrical supplies and smart home solutions provider" />
+    <meta property="og:type" content="website" />
+
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#1e40af" />
+
+    <title>Cofkans Electricals - Premium Electrical Solutions</title>
+    <script type="module" crossorigin src="/assets/index-BLypFvNd.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-motion-Da-7XxCL.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-charts-BzN_SYmn.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-firebase-Bh-PAEmX.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-icons-BenYFu03.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-CKZfpMeu.css">
+  </head>
+  <body>
+    <div id="cofkans-startup-splash" class="cofkans-startup-splash" role="status" aria-live="polite" aria-label="Cofkans Electricals is preparing your experience">
+      <div class="cofkans-startup-splash__glow" aria-hidden="true"></div>
+      <div class="cofkans-startup-splash__content">
+        <img class="cofkans-startup-splash__logo" src="/assets/cofkans-BFw8TZ-5.png" alt="Cofkans Electricals" />
+        <div class="cofkans-startup-splash__progress" aria-hidden="true">
+          <span></span>
+        </div>
+        <p>Preparing your experience</p>
+      </div>
+    </div>
+    <div id="root"></div>
+    <style>
+      .cofkans-startup-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 43%, rgba(116, 79, 190, 0.14), transparent 32rem),
+          linear-gradient(180deg, #ffffff 0%, #fbf9ff 48%, #f5f0ff 100%);
+        color: #34224f;
+        opacity: 1;
+        transition:
+          opacity 420ms cubic-bezier(0.22, 1, 0.36, 1),
+          transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+
+      .cofkans-startup-splash.is-exiting {
+        opacity: 0;
+        transform: scale(1.012);
+        pointer-events: none;
+      }
+
+      .cofkans-startup-splash__content {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        width: min(76vw, 19rem);
+        align-items: center;
+        flex-direction: column;
+        gap: 1.15rem;
+        animation: cofkans-splash-rise 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      .cofkans-startup-splash__glow {
+        position: absolute;
+        width: min(70vw, 28rem);
+        aspect-ratio: 1;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(126, 87, 194, 0.18), rgba(126, 87, 194, 0.06) 42%, transparent 68%);
+        filter: blur(6px);
+        animation: cofkans-splash-glow 2.8s ease-in-out infinite alternate;
+      }
+
+      .cofkans-startup-splash__logo {
+        width: min(68vw, 15.75rem);
+        height: auto;
+        object-fit: contain;
+        filter: drop-shadow(0 1.25rem 2.5rem rgba(70, 39, 132, 0.16));
+      }
+
+      .cofkans-startup-splash__progress {
+        position: relative;
+        width: min(42vw, 8.75rem);
+        height: 2px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(103, 58, 183, 0.16);
+      }
+
+      .cofkans-startup-splash__progress span {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 48%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent, #7e57c2 34%, #5e35b1 66%, transparent);
+        animation: cofkans-splash-progress 1.25s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      }
+
+      .cofkans-startup-splash p {
+        margin: 0;
+        color: rgba(52, 34, 79, 0.54);
+        font: 500 0.78rem/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0;
+      }
+
+      @keyframes cofkans-splash-rise {
+        from {
+          opacity: 0;
+          transform: scale(0.94) translate3d(0, 0.5rem, 0);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translate3d(0, 0, 0);
+        }
+      }
+
+      @keyframes cofkans-splash-glow {
+        from { opacity: 0.64; transform: scale(0.98); }
+        to { opacity: 1; transform: scale(1.03); }
+      }
+
+      @keyframes cofkans-splash-progress {
+        from { transform: translateX(-120%); }
+        to { transform: translateX(220%); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .cofkans-startup-splash,
+        .cofkans-startup-splash__content,
+        .cofkans-startup-splash__glow,
+        .cofkans-startup-splash__progress span {
+          animation: none;
+          transition-duration: 180ms;
+        }
+      }
+    </style>
+    <script>
+      (() => {
+        const MIN_SPLASH_TIME = 300; // shorter minimum for snappier feel
+        const MAX_SPLASH_TIME = 3000; // shorter safety fallback
+        const EXIT_TIME = 420;
+        const startedAt = performance.now();
+        let isClosing = false;
+        const closeSplash = () => {
+          if (isClosing) return;
+          isClosing = true;
+          const splash = document.getElementById('cofkans-startup-splash');
+          if (!splash) return;
+          splash.classList.add('is-exiting');
+          window.setTimeout(() => splash.remove(), EXIT_TIME);
+        };
+        window.__cofkansSplashReady = async () => {
+          // Wait briefly for fonts to load (avoid FOUC), but don't block too long
+          try {
+            if (document.fonts && document.fonts.ready) {
+              await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 800))]);
+            }
+          } catch (e) { /* ignore */ }
+
+          const elapsed = performance.now() - startedAt;
+          window.setTimeout(closeSplash, Math.max(0, MIN_SPLASH_TIME - elapsed));
+        };
+        // Fallback: ensure splash never blocks more than MAX_SPLASH_TIME
+        window.setTimeout(closeSplash, MAX_SPLASH_TIME);
+      })();
+    </script>
+  </body>
+</html>

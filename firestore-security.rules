@@ -1,0 +1,678 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===== OWASP SECURITY HELPER FUNCTIONS =====
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && getUserData().role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isTechnician() {
+      return hasRole('technician');
+    }
+
+    function isDriver() {
+      return hasRole('driver');
+    }
+
+    function isCustomer() {
+      return hasRole('customer');
+    }
+
+    function isActiveUser() {
+      return isSignedIn() && getUserData().isActive == true && getUserData().isBanned == false;
+    }
+
+    // ===== OWASP A01: BROKEN ACCESS CONTROL PROTECTION =====
+
+    function isDeveloper() {
+      // Layered: custom claim is the primary signal (set by setDeveloperClaim CF);
+      // userDoc.isDeveloper + bootstrap email are legacy fallbacks during cutover.
+      return isSignedIn() &&
+             (request.auth.token.developer == true ||
+              getUserData().isDeveloper == true ||
+              request.auth.token.email == 'boatengadams4g@gmail.com');
+    }
+
+    function hasDeveloperClaim() {
+      // Strict: ONLY the custom claim counts. Use for the new portal collections
+      // so a legacy userDoc flag cannot reach them.
+      return isSignedIn() && request.auth.token.developer == true;
+    }
+
+    function canModifyUserRole() {
+      // Only developer can change roles to admin/technician/driver
+      // Regular admins cannot promote users
+      return isDeveloper();
+    }
+
+    function isValidRoleTransition(newRole) {
+      // Validate role values to prevent privilege escalation
+      return newRole in ['customer', 'technician', 'driver', 'admin'];
+    }
+
+    function isCompanyEmail(email) {
+      // Check if email is from company domain
+      return email.matches('.*@cofkanselectricals\\.com$');
+    }
+
+    function canHaveRole(email, role) {
+      return true;
+    }
+
+    // ===== OWASP A03: INJECTION PROTECTION =====
+
+    function isValidString(str, maxLength) {
+      // Prevent injection attacks via string validation
+      return str is string && str.size() <= maxLength && str.size() > 0;
+    }
+
+    function isValidEmail(email) {
+      // Basic email format validation
+      return email is string &&
+             email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') &&
+             email.size() <= 254;
+    }
+
+    function isValidPhoneNumber(phone) {
+      // Validate phone number format (E.164)
+      return phone == null || (phone is string && phone.matches('^\\+[1-9][0-9]{1,14}$'));
+    }
+
+    // ===== OWASP A08: DATA INTEGRITY - PRICE & QUANTITY VALIDATION =====
+
+    function isValidPrice(price) {
+      // Strict price validation: must be positive number, max 1M GHS
+      return price is number && price > 0 && price <= 1000000;
+    }
+
+    function isValidQuantity(quantity) {
+      // Prevent inventory manipulation: max 99 items per cart item
+      return quantity is int && quantity > 0 && quantity <= 99;
+    }
+
+    function isValidCartTotal(total) {
+      // Prevent total manipulation: must be positive, max 10M GHS
+      return total is number && total >= 0 && total <= 10000000;
+    }
+
+    function cartItemsValid(items) {
+      // Rules can't iterate a list to check per-item keys, so we only
+      // enforce shape and size here — per-item field validation lives in
+      // the CartService write paths (cartItemSchema). The previous
+      // hasAll([...]) call always returned false (it checks for those
+      // literal strings as list ELEMENTS), which broke empty-cart create.
+      return items is list && items.size() <= 100;
+    }
+
+    function orderItemsValid(items) {
+      // Validate order items integrity
+      return items is list &&
+             items.size() > 0 &&
+             items.size() <= 100;
+    }
+
+    // ===== OWASP A07: AUTHENTICATION FAILURES - ACCOUNT STATUS =====
+
+    function accountNotLocked() {
+      // Ensure account is not locked due to failed login attempts
+      let userData = getUserData();
+      return !userData.get('isLocked', false);
+    }
+
+    // ===== USERS COLLECTION - ENHANCED SECURITY =====
+
+    match /users/{userId} {
+      // OWASP A01: Anyone can read basic profile info (for reviews, orders)
+      // but sensitive PII fields should be protected
+      allow read: if isSignedIn();
+
+      // OWASP A07: Users can create their own profile with validation
+      allow create: if (isOwner(userId) &&
+                        request.resource.data.uid == userId &&
+                        isValidEmail(request.resource.data.email) &&
+                        request.resource.data.email == request.auth.token.email &&
+                        isValidRoleTransition(request.resource.data.role) &&
+                        canHaveRole(request.resource.data.email, request.resource.data.role) &&
+                        isValidString(request.resource.data.displayName, 100))
+                       ||
+                       (isDeveloper() &&
+                        request.resource.data.uid == userId &&
+                        isValidEmail(request.resource.data.email) &&
+                        isValidRoleTransition(request.resource.data.role) &&
+                        canHaveRole(request.resource.data.email, request.resource.data.role) &&
+                        isValidString(request.resource.data.displayName, 100));
+
+      // OWASP A01: Users can update their own profile, but cannot change role
+      // Only developer can change roles and account status
+      allow update: if (isOwner(userId) &&
+                        request.resource.data.uid == userId &&
+                        request.resource.data.role == resource.data.role && // Cannot change own role
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isDeveloper', 'isBanned', 'isLocked', 'promotedBy', 'promotedAt'])) // Cannot modify security fields
+                       ||
+                       (isDeveloper() && canModifyUserRole() && canHaveRole(request.resource.data.email, request.resource.data.role));
+
+      // Manager and Developer (and legacy Admin) can delete users.
+      allow delete: if canManageUsers();
+    }
+
+    // Reads a staff account row (returns null if not staff).
+    function staffData() {
+      return get(/databases/$(database)/documents/staffAccounts/$(request.auth.uid)).data;
+    }
+    function staffExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/staffAccounts/$(request.auth.uid));
+    }
+    function isBranchStaff(slug) {
+      return staffExists() && staffData().role == 'branch_manager'
+             && staffData().branchSlug == slug && staffData().active == true;
+    }
+    function isBranchRider(slug) {
+      return staffExists() && staffData().role == 'rider'
+             && staffData().branchSlug == slug && staffData().active == true;
+    }
+    function isFrontDesk() {
+      return staffExists() && staffData().role == 'front_desk' && staffData().active == true;
+    }
+    // Manager — the overall boss. Matches either a custom claim or an active
+    // staff row in a manager-class role.
+    function isManager() {
+      return hasRole('manager')
+             || (staffExists()
+                 && staffData().role in ['manager', 'branch_manager', 'management_support']
+                 && staffData().active == true);
+    }
+    // Product permission matrix (mirrors ProductManager on the client):
+    //   Add / update price / edit details → Manager, Front Desk, Developer, Admin
+    //   Remove (delete)                   → Developer only
+    function canManageProducts() {
+      return isManager() || isFrontDesk() || isDeveloper() || isAdmin();
+    }
+    function canRemoveProducts() {
+      return isDeveloper();
+    }
+    // User administration matrix (mirrors StaffManagementPanel on the client):
+    // creating and deleting staff/user accounts is available to the Manager
+    // (the overall boss) and the Developer equally, plus legacy Admin.
+    function canManageUsers() {
+      return isManager() || isDeveloper() || isAdmin();
+    }
+
+    // ===== STAFF ACCOUNTS COLLECTION =====
+    //
+    // Completely separate registry of internal users (branch managers,
+    // riders, front-desk, developers). A row keyed by the Firebase UID is
+    // what gates every /branch/:slug, /rider, /frontdesk and developer
+    // portal. Customers never appear here.
+    match /staffAccounts/{uid} {
+      // A staff member can read their own row to confirm their role.
+      // Developers can read any row (to manage accounts in the dev console).
+      allow read: if isSignedIn() && (request.auth.uid == uid || canManageUsers());
+
+      // Manager and Developer can provision, update, or revoke staff accounts
+      // (equal power). There is no public-facing signup for staff anywhere.
+      allow create, update, delete: if canManageUsers();
+    }
+
+    // ===== DEVELOPER PORTAL — MFA SECRETS =====
+    // TOTP secrets and recovery hashes. NEVER readable by any client; only
+    // Cloud Functions (running as admin) touch this collection.
+    match /totpSecrets/{uid} {
+      allow read, write: if false;
+    }
+
+    // ===== DEVELOPER PORTAL — STAFF SESSIONS =====
+    // Per-developer session metadata (mfaVerifiedAt, lastSeen).
+    // Owner can read their own row; developer claim required for cross-user.
+    match /staffSessions/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || hasDeveloperClaim());
+      // Writes only via CF — clients never set mfaVerifiedAt directly.
+      allow write: if false;
+    }
+
+    // ===== BRANCH SETTINGS =====
+    // Customer-facing per-branch contact/hours. Public read (storefront
+    // shows it on branch pages); only the matching branch_manager (or a
+    // developer) can write.
+    match /branchSettings/{slug} {
+      allow read: if true;
+      allow create, update: if isDeveloper() || isBranchStaff(slug);
+      allow delete: if isDeveloper();
+    }
+
+    // Public marketing/legal pages (Privacy, Terms, About, Contact, Support, Careers).
+    // Anyone can read; only developers can edit from the Developer Portal.
+    match /siteContent/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isDeveloper();
+    }
+
+    // ===== PRODUCTS COLLECTION - ENHANCED SECURITY =====
+
+    match /products/{productId} {
+      // Public read access for browsing
+      allow read: if true;
+
+      // OWASP A01 & A08: Admins and Developers can create/update/delete products
+      // Validate price and stock data
+      // Allow price >= 0 for products (0 means "Contact for Pricing")
+      allow create: if canManageProducts() &&
+                       isValidString(request.resource.data.name, 200) &&
+                       isValidString(request.resource.data.sku, 100) &&
+                       request.resource.data.price >= 0 &&
+                       request.resource.data.price <= 1000000 &&
+                       request.resource.data.totalStock >= 0 &&
+                       request.resource.data.totalStock <= 100000;
+
+      allow update: if canManageProducts() &&
+                       request.resource.data.price >= 0 &&
+                       request.resource.data.price <= 1000000 &&
+                       request.resource.data.totalStock >= 0 &&
+                       request.resource.data.totalStock <= 100000;
+
+      // Only a Developer may permanently take a product off the catalogue.
+      allow delete: if canRemoveProducts();
+    }
+
+    // ===== PRODUCT PRICE OVERRIDES - admin-managed prices for CSV imports =====
+    match /productPriceOverrides/{sku} {
+      // Public read so storefront can apply live prices
+      allow read: if true;
+
+      // Manager / Front Desk / Developer / Admin can set/update; price must be valid
+      allow create, update: if canManageProducts() && isValidPrice(request.resource.data.price);
+      // Only a Developer may remove an override.
+      allow delete: if canRemoveProducts();
+    }
+
+    // ===== PRICE AUDIT - append-only "who changed which price, when" trail =====
+    match /priceAudit/{entryId} {
+      // Anyone who can manage products can review the audit trail.
+      allow read: if canManageProducts();
+
+      // Append-only: entries may be created by an authorised actor, recording
+      // their own uid, but can never be edited or deleted (tamper-evident).
+      allow create: if canManageProducts() &&
+                       isValidString(request.resource.data.sku, 100) &&
+                       request.resource.data.newPrice >= 0 &&
+                       request.resource.data.newPrice <= 1000000 &&
+                       request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ===== CATEGORIES COLLECTION - ENHANCED SECURITY =====
+
+    match /categories/{categoryId} {
+      // Public read access
+      allow read: if true;
+
+      // OWASP A01: Admins and Developers can manage categories
+      allow create, update: if (isAdmin() || isDeveloper()) &&
+                              isValidString(request.resource.data.name, 100);
+      allow delete: if isAdmin() || isDeveloper();
+    }
+
+    // ===== CARTS COLLECTION - ENHANCED SECURITY =====
+
+    match /carts/{userId} {
+      // OWASP A01: Users can only access their own cart
+      allow read: if isOwner(userId) && isActiveUser() && accountNotLocked();
+
+      // OWASP A08: Strict validation on cart creation and updates
+      allow create, update: if isOwner(userId) &&
+                              isActiveUser() &&
+                              accountNotLocked() &&
+                              request.resource.data.userId == userId &&
+                              cartItemsValid(request.resource.data.items) &&
+                              isValidCartTotal(request.resource.data.total) &&
+                              request.resource.data.items.size() <= 100;
+
+      allow delete: if isOwner(userId);
+    }
+
+    // ===== ORDERS COLLECTION - ENHANCED SECURITY =====
+
+    match /orders/{orderId} {
+      // OWASP A01: Users can read their own orders
+      // Admins, technicians, and assigned drivers can read orders.
+      // Branch staff can read every order routed to their branch.
+      // Branch riders can read orders at their branch (so they see the queue).
+      allow read: if isOwner(resource.data.userId) ||
+                     isAdmin() ||
+                     isTechnician() ||
+                     (isDriver() && request.auth.uid == resource.data.driverId) ||
+                     (resource.data.branchSlug != null &&
+                       (isBranchStaff(resource.data.branchSlug) ||
+                        isBranchRider(resource.data.branchSlug)));
+
+      // OWASP A04 & A08: Only active, email-verified users can create orders
+      // Strict validation on order data to prevent price manipulation
+      // Disallow clients from setting payment/transaction fields — those must be
+      // authored by server-side Functions (initializePaystackPayment / webhook).
+      allow create: if isSignedIn() &&
+                       isActiveUser() &&
+                       accountNotLocked() &&
+                       isEmailVerified() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       isValidCartTotal(request.resource.data.total) &&
+                       orderItemsValid(request.resource.data.items) &&
+                       request.resource.data.items.size() > 0 &&
+                       request.resource.data.items.size() <= 100 &&
+                       isValidCartTotal(request.resource.data.subtotal) &&
+                       request.resource.data.total > 0 &&
+                       request.resource.data.taxAmount >= 0 &&
+                       request.resource.data.shippingAmount >= 0 &&
+                       request.resource.data.paymentStatus == 'pending' &&
+                       request.resource.data.status == 'pending' &&
+                       request.resource.data.transactionId == null &&
+                       request.resource.data.transactionReference == null &&
+                       request.resource.data.paidAt == null &&
+                       request.resource.data.paymentReference == null;
+
+      // OWASP A01: Admins can update any order.
+      // Drivers can only update status/fulfillment fields on their assigned orders.
+      // Branch staff can update orders routed to their branch (status, rider
+      // assignment, timeline). Branch riders can self-claim a 'ready' delivery
+      // by setting driverId to themselves and bumping status to 'shipped',
+      // and later mark it delivered.
+      allow update: if isAdmin() ||
+                       (isDriver() &&
+                        request.auth.uid == resource.data.driverId &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'fulfillmentStatus', 'updatedAt', 'deliveredAt', 'statusTimeline', 'lastUpdatedBy'])) ||
+                       (resource.data.branchSlug != null && isBranchStaff(resource.data.branchSlug) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'fulfillmentStatus', 'driverId', 'driverName', 'updatedAt', 'statusTimeline', 'lastUpdatedBy', 'internalNotes'])) ||
+                       (resource.data.branchSlug != null && isBranchRider(resource.data.branchSlug) &&
+                        (request.resource.data.driverId == request.auth.uid || resource.data.driverId == request.auth.uid) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'fulfillmentStatus', 'driverId', 'driverName', 'updatedAt', 'deliveredAt', 'statusTimeline', 'lastUpdatedBy']));
+
+      // OWASP A01: Only admins can delete orders (soft delete recommended)
+      allow delete: if isAdmin();
+    }
+
+    // ===== REVIEWS COLLECTION - ENHANCED SECURITY =====
+
+    match /reviews/{reviewId} {
+      // Approved reviews are public
+      // Users can see their own reviews (any status)
+      allow read: if resource.data.status == 'approved' ||
+                     isOwner(resource.data.userId) ||
+                     isAdmin();
+
+      // OWASP A03 & A07: Verified, active users can create reviews with validation
+      allow create: if isSignedIn() &&
+                       isEmailVerified() &&
+                       isActiveUser() &&
+                       accountNotLocked() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.rating >= 1 &&
+                       request.resource.data.rating <= 5 &&
+                       isValidString(request.resource.data.comment, 2000);
+
+      // Users can update their own pending reviews
+      // Admins can update any review (for moderation)
+      allow update: if (isOwner(resource.data.userId) &&
+                        resource.data.status == 'pending' &&
+                        request.resource.data.rating >= 1 &&
+                        request.resource.data.rating <= 5) ||
+                       isAdmin();
+
+      // OWASP A01: Only admins can delete reviews
+      allow delete: if isAdmin();
+    }
+
+    // ===== DELIVERIES COLLECTION - ENHANCED SECURITY =====
+
+    match /deliveries/{deliveryId} {
+      // OWASP A01: Customers can read their own deliveries
+      // Drivers can read their assigned deliveries
+      allow read: if isOwner(resource.data.customerId) ||
+                     (isDriver() && request.auth.uid == resource.data.driverId) ||
+                     isAdmin();
+
+      // Only admins can create deliveries
+      allow create: if isAdmin();
+
+      // Drivers can update their assigned deliveries (limited fields)
+      // Admins can update any delivery
+      allow update: if (isDriver() &&
+                        request.auth.uid == resource.data.driverId &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentLocation', 'updatedAt'])) ||
+                       isAdmin();
+
+      // Only admins can delete deliveries
+      allow delete: if isAdmin();
+    }
+
+    // ===== SERVICE REQUESTS COLLECTION - ENHANCED SECURITY =====
+
+    match /serviceRequests/{requestId} {
+      // OWASP A01: Customers can read their own requests
+      // Technicians can read assigned requests
+      allow read: if isOwner(resource.data.customerId) ||
+                     (isTechnician() && request.auth.uid == resource.data.assignedTechnicianId) ||
+                     isAdmin();
+
+      // OWASP A03: Active users can create service requests with validation
+      allow create: if isSignedIn() &&
+                       isActiveUser() &&
+                       accountNotLocked() &&
+                       request.resource.data.customerId == request.auth.uid &&
+                       isValidString(request.resource.data.description, 5000);
+
+      // Assigned technicians can update their requests (limited fields)
+      // Admins can update any request
+      allow update: if (isTechnician() &&
+                        request.auth.uid == resource.data.assignedTechnicianId &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'notes', 'updatedAt'])) ||
+                       isAdmin();
+
+      // Only admins can delete requests
+      allow delete: if isAdmin();
+    }
+
+    // ===== NOTIFICATIONS COLLECTION - ENHANCED SECURITY =====
+
+    match /notifications/{notificationId} {
+      // OWASP A01: Users can only read their own notifications
+      allow read: if isOwner(resource.data.userId);
+
+      // System/admin can create notifications
+      allow create: if isAdmin();
+
+      // OWASP A01: Users can only mark their notifications as read (limited fields)
+      allow update: if isOwner(resource.data.userId) &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt']);
+
+      // Users can delete their own notifications
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
+    }
+
+    // ===== ANALYTICS COLLECTION - DEVELOPER WRITE =====
+
+    match /analytics/{analyticsId} {
+      // Admins can read; only developer can write
+      allow read: if isAdmin();
+      allow write: if isDeveloper();
+    }
+
+    // ===== SECURITY MONITORING COLLECTION =====
+    match /securityEvents/{eventId} {
+      // Developer reads everything; signed-in users can read their own events.
+      allow read: if isDeveloper()
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+      // Signed-in users may append their own events (login success, new device, etc).
+      // Anonymous/unauth writes are still rejected. No updates or deletes ever.
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ===== USER SESSION REVOCATION (per-user) =====
+    // Stores `revokedAt`. Sessions started before this timestamp get kicked
+    // on next auth-state restore (see isSessionRevoked).
+    match /userSessions/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ===== KNOWN DEVICES (per-user) =====
+    match /knownDevices/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ===== FAILED LOGIN TRACKING =====
+    match /loginAttempts/{trackerId} {
+      allow read, write: if true;
+    }
+
+    // ===== AUDIT LOGS COLLECTION =====
+    // Reads gated by the strict custom claim — legacy isDeveloper() fallbacks
+    // (email/userDoc) must not see audit history. Writes only via Cloud
+    // Function (auditLog callable) which uses Admin SDK and bypasses rules.
+    match /auditLogs/{logId} {
+      allow read: if hasDeveloperClaim();
+      allow create: if hasDeveloperClaim();
+      allow update, delete: if false;
+    }
+
+    // ===== FEATURE FLAGS / KILL SWITCHES =====
+    // Customer app reads maintenance/checkout flags freely. All writes go
+    // through the setFeatureFlag CF (re-auth + audit) — never from clients.
+    match /featureFlags/{flagId} {
+      allow read: if true;
+      allow write: if hasDeveloperClaim();
+    }
+
+    // ===== ERROR LOGS — client crash reports =====
+    // Anyone signed in can create (write-only telemetry); only developers
+    // can read. Updates/deletes are forbidden so the log is append-only.
+    match /errorLogs/{logId} {
+      allow read: if hasDeveloperClaim();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+
+    // ===== SUPPORT TICKETS — read from portal =====
+    // Customer creates a ticket from the support widget; developer + admin
+    // can read; only the original author can update their own ticket body.
+    match /supportTickets/{ticketId} {
+      allow read: if hasDeveloperClaim() || isAdmin();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // ===== SYSTEM CONFIG - DEVELOPER ONLY =====
+    match /systemConfig/{configId} {
+      allow read: if isAdmin();
+      allow write: if isDeveloper();
+    }
+
+    // ===== SMS CAMPAIGNS - DEVELOPER ONLY WRITE =====
+    match /smsCampaigns/{campaignId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isDeveloper();
+    }
+
+    // ===== DEVELOPER-ONLY SCRATCH SPACE =====
+    // Top-level "devConsole" collection + any subcollections
+    match /devConsole/{docId=**} {
+      allow read, write: if isDeveloper();
+    }
+  }
+}
+
+// ===== STORAGE RULES - ENHANCED SECURITY =====
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // OWASP A03: File validation helper
+    function isValidImageType() {
+      return request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)');
+    }
+
+    function isValidFileSize(maxSizeMB) {
+      return request.resource.size < maxSizeMB * 1024 * 1024;
+    }
+
+    // Product images - public read, admin write with validation
+    match /products/{productId}/{allPaths=**} {
+      allow read: if true;
+
+      // OWASP A03 & A05: Validate file type and size
+      allow write: if request.auth != null &&
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+                      isValidImageType() &&
+                      isValidFileSize(10); // 10MB max
+    }
+
+    // User avatars - public read, owner write with validation
+    match /users/{userId}/avatar/{fileName} {
+      allow read: if true;
+
+      // OWASP A03: Strict validation on user uploads
+      allow write: if request.auth.uid == userId &&
+                      isValidImageType() &&
+                      isValidFileSize(5) && // 5MB max
+                      fileName.matches('^[a-zA-Z0-9_-]+\\.(jpg|jpeg|png|webp)$'); // Prevent path traversal
+    }
+
+    // Review images - public read, verified users write with validation
+    match /reviews/{reviewId}/{fileName} {
+      allow read: if true;
+
+      // OWASP A03 & A07: Email verified users only, strict validation
+      allow write: if request.auth != null &&
+                      request.auth.token.email_verified == true &&
+                      isValidImageType() &&
+                      isValidFileSize(10) && // 10MB max
+                      fileName.matches('^[a-zA-Z0-9_-]+\\.(jpg|jpeg|png|webp)$');
+    }
+
+    // Delivery proof (signature, photos) - restricted access with validation
+    match /deliveries/{deliveryId}/proof/{fileName} {
+      allow read: if request.auth != null;
+
+      // OWASP A01: Only assigned driver or admin can upload
+      allow write: if request.auth != null &&
+                      isValidImageType() &&
+                      isValidFileSize(10) &&
+                      (get(/databases/$(database)/documents/deliveries/$(deliveryId)).data.driverId == request.auth.uid ||
+                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    // Service request attachments with validation
+    match /serviceRequests/{requestId}/{fileName} {
+      allow read: if request.auth != null;
+
+      // OWASP A03: Strict file validation
+      allow write: if request.auth != null &&
+                      isValidImageType() &&
+                      isValidFileSize(20) && // 20MB max
+                      fileName.matches('^[a-zA-Z0-9_-]+\\.(jpg|jpeg|png|webp|pdf)$');
+    }
+  }
+}

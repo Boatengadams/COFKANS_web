@@ -1,0 +1,15 @@
+packages:
+  - '.'
+allowBuilds:
+  '@firebase/util': true
+  '@tailwindcss/oxide': true
+  esbuild: true
+  protobufjs: true
+supportedArchitectures:
+  os:
+    - linux
+  cpu:
+    - x64
+    - arm64
+  libc:
+    - glibc

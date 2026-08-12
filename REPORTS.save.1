@@ -1,0 +1,25 @@
+                                                                            
+  ### 🛠️ What Was Upgraded                                                   
+                                                                             
+  1. Enhanced Firestore Security Rules (firestore.rules)                     
+      • We updated firestore.rules to fully incorporate the detailed, OWASP- 
+      aligned rules from firestore-security.rules.
+      • Includes robust checks for access control (A01), injection protection
+      (A03), data integrity checks (A08) for prices and quantities, and      
+      account status/lockout validations.
+  2. Clean Storage Rules Separation (storage.rules)
+      • We separated the Storage rules into a dedicated file: storage.rules. 
+      • This prevents syntax errors that would occur when trying to deploy   
+      Firestore-wrapped rules to the Storage service bucket.
+  3. Realtime Database Rules Configuration (database.rules.json)
+      • We created database.rules.json to secure the Realtime Database       
+      against unauthorized public writes and reads (requiring authentication).
+      • Updated firebase.json to reference these rules and added the database
+      emulator under the port 9000.
+  4. Developer Gateway Configuration (.env.local)
+      • Populated the EXPO_PUBLIC_DEVELOPER_EMAIL variable with the developer
+      email (boatengadams4g@gmail.com) in .env.local to align with the access
+      controls set up in the security rules.
+  
+
+──────────────────────────────────────────────────────

@@ -1,0 +1,27 @@
+/* KEEP_IN_SYNC(code-components-transpiler/tailwind/src/generate_classes.ts) */
+
+/* This CSS should be kept in sync with the transpiler version. Note that we
+ * don't need to do many of the steps from there, as we can just use regular
+ * Tailwind on Foundry, but we should make sure any plugins and other config is the
+ * same.
+ */
+
+/* Import tailwind and have it only scan code files inside src directory.
+ * Otherwise, the dev server might trigger unnecessary updates due to the tailwind plugin scanning unnecessary files
+ */
+@import 'tailwindcss' source(none);
+@source './src/**/*.{js,ts,jsx,tsx}';
+
+/* Import Tailwind Animate plugin */
+@import 'tw-animate-css';
+
+/* Import the default Shadcn theme variables. These act as a fallback in case
+ * the model removes a required variable from globals.css, so that the page
+ * continues to render 
+ */
+@import './default_shadcn_theme.css';
+
+/* Import user's custom styles from the Make.
+ * Note that we hoist @imports using a PostCSS plugin, so this can contain @imports e.g. for fonts.
+ */
+@import './src/styles/globals.css';
