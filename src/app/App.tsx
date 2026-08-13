@@ -1289,12 +1289,6 @@ function AppContent() {
 
       {/* Premium Footer */}
       <footer className="relative py-16 sm:py-24 lg:py-32 px-4 sm:px-6 bg-gradient-to-b from-background to-muted/30">
-        <div className="absolute inset-0 opacity-[0.015]"
-          style={{
-            backgroundImage: 'radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)',
-            backgroundSize: '40px 40px'
-          }}
-        />
 
         <div className="max-w-[1400px] mx-auto relative">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 sm:gap-12 md:gap-16 mb-12 sm:mb-20">
@@ -1375,7 +1369,6 @@ function AppContent() {
               <a href="/shipping" className="hover:text-foreground transition-colors cursor-pointer">Delivery</a>
               <a href="/warranty" className="hover:text-foreground transition-colors cursor-pointer">Warranty</a>
               <a href="/installation" className="hover:text-foreground transition-colors cursor-pointer">Installation</a>
-              <a href="/privacy" className="hover:text-foreground transition-colors cursor-pointer">Privacy</a>
               <a href="/terms" className="hover:text-foreground transition-colors cursor-pointer">Terms</a>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />

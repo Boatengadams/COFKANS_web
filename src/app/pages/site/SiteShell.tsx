@@ -40,7 +40,6 @@ export function SiteShell({
             <a href="/shipping" className="hover:text-foreground">Delivery</a>
             <a href="/warranty" className="hover:text-foreground">Warranty</a>
             <a href="/installation" className="hover:text-foreground">Installation</a>
-            <a href="/privacy" className="hover:text-foreground">Privacy</a>
             <a href="/terms" className="hover:text-foreground">Terms</a>
             <a href="/contact" className="hover:text-foreground">Contact</a>
           </nav>
