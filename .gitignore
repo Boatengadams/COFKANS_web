@@ -8,6 +8,7 @@ expo-env.d.ts
 # Local backend credentials
 node_modules/
 functions/node_modules/
+.venv/
 .env
 .env.local
 .env.*.local
