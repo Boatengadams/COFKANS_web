@@ -1,5 +1,6 @@
 {
   "expo": {
+    "entryPoint": "node_modules/expo-router/entry",
     "name": "Cofkans Electricals",
     "slug": "cofkans-mobile",
     "version": "1.0.0",
