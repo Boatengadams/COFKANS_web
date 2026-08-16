@@ -1,21 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
-import { Phone, ArrowLeft, ShieldCheck, RefreshCw } from 'lucide-react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { PhoneInputGH } from '../common/PhoneInputGH';
 
 const RESEND_COOLDOWN_S = 60;
 
 function mapPhoneError(code?: string): string {
   switch (code) {
     case 'auth/operation-not-allowed':
-      return 'Phone sign-in is not enabled for this app yet. Please use Google or email instead.';
+      return 'Phone sign-in is not enabled for this app yet. Please contact support.';
     case 'auth/invalid-phone-number':
-      return 'That phone number looks invalid. Use the format 024 123 4567.';
+      return 'Enter a valid Ghana mobile number, for example 024 123 4567.';
     case 'auth/too-many-requests':
       return 'Too many attempts. Wait a few minutes and try again.';
     case 'auth/quota-exceeded':
-      return 'SMS limit reached for today. Try again tomorrow or use email.';
+      return 'SMS limit reached for today. Try again tomorrow.';
     case 'auth/captcha-check-failed':
       return 'Security check failed. Refresh the page and try again.';
     case 'auth/missing-phone-number':
@@ -56,11 +57,16 @@ export function PhoneSignIn({ onDone }: { onDone?: () => void }) {
     return () => clearTimeout(t);
   }, [resendIn]);
 
-  const normalised = phone.replace(/\s/g, '').replace(/^0/, '+233');
+  const normalised = (() => {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.startsWith('233')) return `+${digits}`;
+    if (digits.startsWith('0')) return `+233${digits.slice(1)}`;
+    return `+233${digits}`;
+  })();
 
   const sendCode = async () => {
-    if (!/^\+\d{10,15}$/.test(normalised)) {
-      toast.error('Enter a valid phone (e.g. 024 123 4567).');
+    if (!/^\+233[2-9]\d{8}$/.test(normalised)) {
+      toast.error('Enter a valid Ghana number (e.g. 024 123 4567).');
       return;
     }
     if (!recaptchaRef.current) {
@@ -98,27 +104,11 @@ export function PhoneSignIn({ onDone }: { onDone?: () => void }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" /> Secured by Firebase Phone Auth
-      </div>
-
       {step === 'phone' ? (
         <>
           <label className="block">
             <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Phone number</span>
-            <div className="mt-1 flex items-center gap-2 px-4 py-3 bg-muted rounded-xl border-2 border-border focus-within:border-primary">
-              <Phone className="w-4 h-4 text-muted-foreground" />
-              <input
-                type="tel"
-                value={phone}
-                onChange={e => setPhone(e.target.value.replace(/[^\d\s+]/g, ''))}
-                placeholder="024 123 4567"
-                className="flex-1 bg-transparent focus:outline-none font-semibold"
-              />
-            </div>
-            <span className="block mt-1 text-xs text-muted-foreground">
-              Ghana numbers auto-prefix to +233. International? Start with +.
-            </span>
+            <PhoneInputGH value={phone} onChange={setPhone} placeholder="24 123 4567" />
           </label>
           <button
             onClick={sendCode}

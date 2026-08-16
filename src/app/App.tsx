@@ -819,12 +819,6 @@ function AppContent() {
                 : 'translateY(0)',
             }}
           >
-            <img
-              src={DEFAULT_HERO_SLIDES[index % DEFAULT_HERO_SLIDES.length]?.img}
-              alt=""
-              aria-hidden="true"
-              className="absolute inset-0 w-full h-full object-cover"
-            />
             {/* Subtle dark gradient only at bottom for text readability */}
             <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(4,8,18,.78),rgba(4,8,18,.18)_55%,rgba(4,8,18,.48)),linear-gradient(180deg,rgba(4,8,18,.2),transparent_40%,rgba(4,8,18,.72)] z-10" />
             <img

@@ -41,23 +41,24 @@
 }
 
 .dark {
-  --background: #14121F;           /* near-black indigo */
-  --foreground: #E9E6FF;           /* soft lavender text */
-  --card: #1B1830;
-  --card-foreground: #E9E6FF;
+  /* Neutral charcoal surfaces: dark mode must read as dark, not violet. */
+  --background: #0B0D10;
+  --foreground: #F3F4F6;
+  --card: #12161B;
+  --card-foreground: #F3F4F6;
 
   --primary: #A78BFA;              /* luminous violet on dark */
   --primary-foreground: #17142B;
-  --secondary: #241F3A;
-  --secondary-foreground: #E9E6FF;
+  --secondary: #1B2027;
+  --secondary-foreground: #F3F4F6;
   --accent: #C084FC;
   --accent-foreground: #17142B;
-  --muted: #221D38;
-  --muted-foreground: #A29CC4;
+  --muted: #171B21;
+  --muted-foreground: #A7AFBA;
   --ring: #A78BFA;
-  --border: rgba(167, 139, 250, 0.18);
-  --input-background: rgba(167, 139, 250, 0.06);
-  --color-surface-hover: rgba(167, 139, 250, 0.12);
+  --border: rgba(255, 255, 255, 0.12);
+  --input-background: rgba(255, 255, 255, 0.05);
+  --color-surface-hover: rgba(255, 255, 255, 0.08);
   --gradient-gold: linear-gradient(135deg, #6366F1 0%, #7C3AED 45%, #A855F7 70%, #C084FC 100%);
   --gradient-gold-subtle: linear-gradient(135deg, rgba(167, 139, 250, 0.20) 0%, rgba(192, 132, 252, 0.08) 100%);
   --true-gold: #C084FC;
@@ -142,8 +143,13 @@ button,
   border-bottom: 1px solid rgba(124, 58, 237, 0.12);
 }
 .dark .lux-glass {
-  background: rgba(20, 18, 31, 0.72);
-  border-bottom: 1px solid rgba(167, 139, 250, 0.12);
+  background: rgba(11, 13, 16, 0.82);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Product photography stays on a clean studio-white surface in dark mode. */
+.dark .product-image-surface {
+  background: #FFFFFF !important;
 }
 
 /* Sweeping shimmer for gold CTAs — add class, no extra markup needed. */

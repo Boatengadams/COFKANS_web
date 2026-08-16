@@ -1,6 +1,6 @@
 // Backend disabled while DEMO_MODE is on (see /src/lib/demo-mode.ts).
 // In demo mode all exports are inert stubs and no network calls fire.
-import { DEMO_MODE, IS_WEB, getPublicEnv } from './demo-mode';
+import { APP_ENV, DEMO_MODE, IS_WEB, getPublicEnv } from './demo-mode';
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, OAuthProvider, type Auth } from 'firebase/auth';
 import { getFirestore, initializeFirestore, disableNetwork, type Firestore, setLogLevel } from 'firebase/firestore';
@@ -16,28 +16,29 @@ const env = (typeof process !== 'undefined' ? process.env : {}) as Record<string
 // back to offline cache — but noisy. Silence info/warn everywhere.
 setLogLevel('error');
 
-// Fallback config keeps Figma Make preview working when env vars aren't set.
-// In Expo, set EXPO_PUBLIC_FIREBASE_* env vars and these fallbacks are ignored.
-const fallback = {
-  apiKey: 'AIzaSyBxa8-e89nw7kJEpntlLieDot1Utog8blY',
-  authDomain: 'cofkanselectricals-1.firebaseapp.com',
-  projectId: 'cofkanselectricals-1',
-  storageBucket: 'cofkanselectricals-1.firebasestorage.app',
-  messagingSenderId: '380088923938',
-  appId: '1:380088923938:web:e3ccaee709e3709615d77b',
-  measurementId: 'G-BSPJHD64FB',
+const requiredFirebaseConfig = {
+  apiKey: getPublicEnv('FIREBASE_API_KEY'),
+  authDomain: getPublicEnv('FIREBASE_AUTH_DOMAIN'),
+  projectId: getPublicEnv('FIREBASE_PROJECT_ID'),
+  storageBucket: getPublicEnv('FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: getPublicEnv('FIREBASE_MESSAGING_SENDER_ID'),
+  appId: getPublicEnv('FIREBASE_APP_ID'),
 };
 
+const missingFirebaseConfig = Object.entries(requiredFirebaseConfig)
+  .filter(([, value]) => !value)
+  .map(([key]) => key);
+
+if (!DEMO_MODE && missingFirebaseConfig.length > 0) {
+  throw new Error(
+    `Missing Firebase configuration for ${APP_ENV} mode: ${missingFirebaseConfig.join(', ')}. ` +
+      'Set the matching EXPO_PUBLIC_FIREBASE_* values before starting or exporting the app.',
+  );
+}
+
 const firebaseConfig = {
-  apiKey: getPublicEnv('FIREBASE_API_KEY') || fallback.apiKey,
-  authDomain: getPublicEnv('FIREBASE_AUTH_DOMAIN') || fallback.authDomain,
-  projectId: getPublicEnv('FIREBASE_PROJECT_ID') || fallback.projectId,
-  storageBucket: getPublicEnv('FIREBASE_STORAGE_BUCKET') || fallback.storageBucket,
-  messagingSenderId:
-    getPublicEnv('FIREBASE_MESSAGING_SENDER_ID') || fallback.messagingSenderId,
-  appId: getPublicEnv('FIREBASE_APP_ID') || fallback.appId,
-  measurementId:
-    getPublicEnv('FIREBASE_MEASUREMENT_ID') || fallback.measurementId,
+  ...requiredFirebaseConfig,
+  measurementId: getPublicEnv('FIREBASE_MEASUREMENT_ID') || undefined,
 };
 
 // Firebase SDK objects must be real, even in DEMO_MODE — many components do

@@ -246,7 +246,7 @@ export default function ProductPage({ productId, onClose }: Props) {
         {/* Left: Gallery */}
         <section aria-labelledby="product-media" className="bg-card rounded-2xl p-4 lg:p-6">
           <div
-            className="w-full aspect-[4/3] bg-muted rounded-xl flex items-center justify-center overflow-hidden relative"
+            className="product-image-surface w-full aspect-[4/3] bg-muted rounded-xl flex items-center justify-center overflow-hidden relative"
             onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
           >
@@ -296,7 +296,7 @@ export default function ProductPage({ productId, onClose }: Props) {
                   key={`${item.src}-${i}`}
                   onClick={() => setActiveIdx(i)}
                   aria-label={`View ${i + 1}`}
-                  className={`w-20 h-20 rounded-xl bg-muted p-1 flex-shrink-0 border ${i === activeIdx ? 'ring-2 ring-primary' : 'border-border'}`}
+                  className={`product-image-surface w-20 h-20 rounded-xl bg-muted p-1 flex-shrink-0 border ${i === activeIdx ? 'ring-2 ring-primary' : 'border-border'}`}
                 >
                   {item.type === 'image' ? (
                     <img src={item.src} alt={`Thumbnail ${i + 1}`} className="w-full h-full object-contain" />

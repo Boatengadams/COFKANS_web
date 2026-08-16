@@ -89,7 +89,7 @@ export function BulkDiscountProduct({
       )}
 
       {/* Product image */}
-      <div className="relative h-48 bg-muted flex items-center justify-center overflow-hidden">
+      <div className="product-image-surface relative h-48 bg-muted flex items-center justify-center overflow-hidden">
         {image ? (
           <img src={image} alt={name} className="w-full h-full object-cover" />
         ) : (

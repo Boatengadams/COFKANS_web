@@ -5,6 +5,7 @@ allowBuilds:
   '@tailwindcss/oxide': true
   esbuild: true
   protobufjs: true
+  unrs-resolver: true
 supportedArchitectures:
   os:
     - linux

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { LayoutDashboard, ShoppingBag, ShoppingCart, Heart, Activity, Users, ClipboardList, Star, Route, Wallet, Boxes, ShieldAlert, Inbox, MessageSquare, ThumbsUp, Clock, Brain } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, ShoppingCart, Heart, Activity, Users, ClipboardList, Star, Route, Wallet, Boxes, ShieldAlert, Inbox, ThumbsUp, Clock, Brain } from 'lucide-react';
 import { useCartStore } from '@/stores/cart-store';
 import { CartView } from '../dashboard/CartView';
 import { DashboardShell, type TabDef } from './DashboardShell';
@@ -32,7 +32,7 @@ export function DashboardPro({ user, initialTab, onClose, onSignOut }: Props) {
     if (role === 'admin') {
       return [
         { id: 'overview',    label: 'Overview',    icon: LayoutDashboard, render: () => <AdminOverview /> },
-        { id: 'inventory',   label: 'Inventory',   icon: Boxes, badge: 7, render: () => <AdminInventory /> },
+        { id: 'inventory',   label: 'Inventory',   icon: Boxes, render: () => <AdminInventory /> },
         { id: 'users',       label: 'Users',       icon: Users,           render: () => <AdminUsers /> },
         { id: 'ai_center',   label: 'AI Center',   icon: Brain,           render: () => <AISupportCenter currentUserId={user.uid} /> },
         { id: 'ai_security', label: 'AI Security', icon: ShieldAlert,     render: () => <AISecurityOverview /> },

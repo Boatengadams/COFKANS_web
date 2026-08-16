@@ -4,22 +4,20 @@
  * Signs in with email + password, resolves the role, then navigates to the
  * role's dedicated Expo Router portal URL.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Image as NativeImage } from 'react-native';
 import { motion } from 'motion/react';
 import {
   Eye, EyeOff, Lock, Mail, ShieldCheck,
-  AlertTriangle, Loader2, ArrowLeft, MapPin,
+  AlertTriangle, Loader2, ArrowLeft,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useFirebaseAuth } from '../contexts/FirebaseAuthContext';
 import { portalRoute, type StaffKind } from '../../lib/staff-auth';
-import { DEMO_MODE, getDemoRole } from '../../lib/demo-mode';
 import { findStaffByEmail, type StaffRole } from '../../lib/staff';
 import { DEFAULT_HERO_SLIDES } from '../../lib/hero-slides';
 import cofkansLogo from '../../imports/cofkans.png';
-import loginMap from '../../imports/map.jpg';
 
 function assetUrl(asset: unknown): string {
   if (typeof asset === 'string') return asset;
@@ -38,9 +36,7 @@ function assetUrl(asset: unknown): string {
 }
 
 const cofkansLogoUrl = assetUrl(cofkansLogo);
-const loginMapUrl = assetUrl(loginMap);
-
-/** Map demo-mode role string or live staff role → StaffKind. */
+/** Map the database staff role to its portal kind. */
 function roleToKind(role: string): StaffKind {
   switch (role) {
     case 'manager':    return 'manager'          as const;
@@ -62,13 +58,6 @@ function roleToKind(role: string): StaffKind {
 }
 
 async function resolveLoginDestination(email: string): Promise<string | null> {
-  if (DEMO_MODE) {
-    const demoRole = getDemoRole();
-    const kind = roleToKind(demoRole);
-    if (kind === 'none') return null;
-    if (demoRole === 'branch_desk') return '/branchdesk';
-    return portalRoute(kind);
-  }
   const staff = await findStaffByEmail(email);
   const kind = roleToKind((staff?.role ?? 'none') as StaffRole | 'none');
   return kind === 'none' ? null : portalRoute(kind);
@@ -142,16 +131,6 @@ function LoginForm({ onSubmit, submitting, error, setError, resetPassword }: {
   const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [resetting, setResetting]       = useState(false);
-  const [currentSlide, setCurrentSlide] = useState(0);
-
-  useEffect(() => {
-    if (DEFAULT_HERO_SLIDES.length < 2) return;
-    const timer = window.setInterval(() => {
-      setCurrentSlide((slide) => (slide + 1) % DEFAULT_HERO_SLIDES.length);
-    }, 5200);
-    return () => window.clearInterval(timer);
-  }, []);
-
   const onForgot = async () => {
     if (!email.trim()) { setError('Enter your work email first, then tap "Forgot password".'); return; }
     setResetting(true); setError(null);
@@ -167,27 +146,7 @@ function LoginForm({ onSubmit, submitting, error, setError, resetPassword }: {
     <div className="min-h-screen grid lg:grid-cols-2 bg-background">
       {/* Brand panel */}
       <div className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-[#0B1220] p-12 text-white">
-        {DEFAULT_HERO_SLIDES.map((slide, index) => (
-          <motion.div
-            key={slide.img || index}
-            initial={{ opacity: 0, scale: 1.04 }}
-            animate={{
-              opacity: currentSlide === index ? 1 : 0,
-              scale: currentSlide === index ? 1 : 1.06,
-            }}
-            transition={{ duration: 1.6, ease: [0.19, 1, 0.22, 1] }}
-            className="absolute inset-0"
-          >
-            <img
-              src={slide.img}
-              alt=""
-              aria-hidden="true"
-              className="h-full w-full object-cover"
-              loading={index === 0 ? 'eager' : 'lazy'}
-              decoding="async"
-            />
-          </motion.div>
-        ))}
+        <img src={DEFAULT_HERO_SLIDES[0]?.img} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" loading="eager" decoding="async" />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(11,18,32,.88),rgba(11,18,32,.45)_58%,rgba(11,18,32,.78)),linear-gradient(180deg,rgba(11,18,32,.35),rgba(11,18,32,.08)_35%,rgba(11,18,32,.82))]" />
         <div className="absolute inset-x-0 top-0 h-1 bg-[#F5A524]" />
         <div className="absolute inset-y-0 right-0 w-1/3 bg-[#F5A524]/10" />
@@ -198,31 +157,9 @@ function LoginForm({ onSubmit, submitting, error, setError, resetPassword }: {
           <p className="mt-3 text-xs font-bold uppercase tracking-[0.2em] text-[#F5A524]">Staff Portal</p>
         </div>
         <div className="relative flex min-h-[21rem] max-w-sm items-center justify-center">
-          <img
-            src={loginMapUrl}
-            alt=""
-            aria-hidden="true"
-            className="absolute left-1/2 top-1/2 h-auto w-[min(92vw,36rem)] max-w-none -translate-x-1/2 -translate-y-1/2 object-contain opacity-30 mix-blend-screen saturate-150"
-            loading="eager"
-            decoding="async"
-          />
-          <div className="flex gap-2 pt-1">
-            {DEFAULT_HERO_SLIDES.slice(0, 5).map((slide, index) => (
-              <button
-                key={`login-slide-${slide.img || index}`}
-                type="button"
-                aria-label={`Show staff login background ${index + 1}`}
-                onClick={() => setCurrentSlide(index)}
-                className={`h-1.5 rounded-full transition-all duration-500 ${
-                  currentSlide === index ? 'w-10 bg-[#F5A524]' : 'w-2 bg-white/35 hover:bg-white/55'
-                }`}
-              />
-            ))}
-          </div>
+          <div className="h-1.5 w-10 rounded-full bg-[#F5A524]" aria-hidden="true" />
         </div>
-        <div className="relative flex items-center gap-2 text-xs text-white/70">
-          <MapPin className="w-3.5 h-3.5" /> 7 branches · Ashanti & Greater Accra
-        </div>
+        <div className="relative text-xs text-white/70">Staff workspace</div>
       </div>
 
       {/* Form panel */}

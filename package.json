@@ -16,7 +16,16 @@
     "firebase:deploy": "firebase deploy",
     "firebase:deploy:staging": "firebase deploy --project=cofkans-staging",
     "firebase:deploy:production": "firebase deploy --project=cofkanselectricals-app",
-    "typecheck": "tsc --noEmit"
+    "manager:test-data": "node scripts/manager-test-data.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -102,13 +111,24 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@babel/core": "^7.25.2",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.4",
     "@types/crypto-js": "^4.2.2",
     "@types/node": "^22.10.0",
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.10",
+    "axe-core": "^4.13.0",
+    "eslint": "^10.8.1",
+    "eslint-config-expo": "^57.0.1",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6",
     "tailwindcss": "4.1.12",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10"
   }
 }

@@ -104,7 +104,11 @@ export function useHeroSlides(): HeroSlide[] {
               title: s.title || '',
               subtitle: s.subtitle || '',
             }));
-          setSlides(rows.length ? rows : DEFAULT_HERO_SLIDES);
+          // Keep the complete local catalogue visible when the console only
+          // contains a partial set of slides. Remote rows override the
+          // matching positions; the shared local catalogue fills the rest.
+          const merged = DEFAULT_HERO_SLIDES.map((fallback, index) => rows[index] ? { ...fallback, ...rows[index] } : fallback);
+          setSlides(rows.length ? [...merged, ...rows.slice(DEFAULT_HERO_SLIDES.length)] : DEFAULT_HERO_SLIDES);
         },
         () => setSlides(DEFAULT_HERO_SLIDES),
       );

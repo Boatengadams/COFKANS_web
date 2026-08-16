@@ -1,7 +1,6 @@
 import { Redirect, useLocalSearchParams } from 'expo-router';
 import { FirebaseAuthProvider } from '../../contexts/FirebaseAuthContext';
 import { getBranchBySlug } from '../../../lib/branches';
-import { DEMO_MODE } from '../../../lib/demo-mode';
 import { LivePortalLogin } from './LivePortalLogin';
 import { LivePortalShell } from './LivePortalShell';
 import { LiveStaffGate } from './LiveStaffGate';
@@ -9,7 +8,6 @@ import { LiveBranchDashboard } from './LiveBranchDashboard';
 import { LiveBranchSettings } from './LiveBranchSettings';
 import { RiderDashboard } from './RiderDashboard';
 import { FrontDeskDashboard } from './FrontDeskDashboard';
-import { DriverDashboard as DemoDriverDashboard } from '../../modules/branches/dashboard/DriverDashboard';
 import { useStaffRole } from '../../hooks/useStaffRole';
 
 type ParamSlug = string | string[] | undefined;
@@ -45,7 +43,6 @@ export function RiderPortalRoute() {
 function RiderPortalContent() {
   const { staff } = useStaffRole();
   if (!staff?.branchSlug) return <p className="text-zinc-400">No branch is assigned to this rider.</p>;
-  if (DEMO_MODE) return <DemoDriverDashboard />;
   return <RiderDashboard branchSlug={staff.branchSlug} riderUid={staff.uid} riderName={staff.displayName ?? staff.email} />;
 }
 

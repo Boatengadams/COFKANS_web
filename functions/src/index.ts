@@ -105,11 +105,46 @@ function cleanString(value: unknown, field: string, max: number): string {
   if (typeof value !== "string") {
     throw new HttpsError("invalid-argument", `${field} must be a string.`);
   }
-  const cleaned = value.trim();
+  // Treat every callable payload as hostile input. Normalize Unicode, remove
+  // control characters, collapse whitespace, then enforce the limit.
+  const cleaned = value
+    .normalize("NFKC")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!cleaned || cleaned.length > max) {
     throw new HttpsError("invalid-argument", `${field} is required and must be ${max} characters or fewer.`);
   }
   return cleaned;
+}
+
+function cleanUid(value: unknown, field: string): string {
+  const uid = cleanString(value, field, 128);
+  if (!/^[A-Za-z0-9:_-]+$/.test(uid)) {
+    throw new HttpsError("invalid-argument", `${field} is invalid.`);
+  }
+  return uid;
+}
+
+function cleanBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new HttpsError("invalid-argument", `${field} must be boolean.`);
+  return value;
+}
+
+function cleanAuditMeta(value: unknown, depth = 0): Record<string, unknown> | null {
+  if (value == null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 2) {
+    throw new HttpsError("invalid-argument", "meta must be a plain object.");
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>).slice(0, 40)) {
+    const safeKey = cleanString(key, "meta key", 80);
+    if (typeof raw === "string") output[safeKey] = cleanString(raw, `meta.${safeKey}`, 500);
+    else if (typeof raw === "number" || typeof raw === "boolean" || raw === null) output[safeKey] = raw;
+    else if (Array.isArray(raw)) output[safeKey] = raw.slice(0, 20).map((item) => typeof item === "string" ? cleanString(item, `meta.${safeKey}`, 200) : item);
+    else output[safeKey] = cleanAuditMeta(raw, depth + 1);
+  }
+  return output;
 }
 
 function optionalCleanString(value: unknown, field: string, max: number): string | null {
@@ -1027,10 +1062,8 @@ export const setDeveloperClaim = onCall(
   {region: "us-central1"},
   async (req) => {
     const actor = requireDeveloper(req);
-    const {targetUid, grant} = req.data as {targetUid: string; grant: boolean};
-    if (!targetUid || typeof grant !== "boolean") {
-      throw new HttpsError("invalid-argument", "targetUid + grant required.");
-    }
+    const targetUid = cleanUid(req.data?.targetUid, "targetUid");
+    const grant = cleanBoolean(req.data?.grant, "grant");
     if (targetUid === actor && !grant) {
       throw new HttpsError("failed-precondition", "Cannot revoke your own claim from the portal — use the CLI.");
     }
@@ -1101,9 +1134,9 @@ export const verifyTotp = onCall(
   {region: "us-central1"},
   async (req) => {
     const uid = requireDeveloper(req);
-    const {code} = req.data as {code: string};
-    if (!code || typeof code !== "string") {
-      throw new HttpsError("invalid-argument", "code required.");
+    const code = cleanString(req.data?.code, "code", 32).toUpperCase();
+    if (!/^\d{6}$/.test(code) && !/^[A-Z0-9]{8}$/.test(code)) {
+      throw new HttpsError("invalid-argument", "Invalid verification code.");
     }
 
     const snap = await getFirestore().doc(`totpSecrets/${uid}`).get();
@@ -1158,21 +1191,16 @@ export const auditLog = onCall(
   {region: "us-central1"},
   async (req) => {
     const uid = requireDeveloper(req);
-    const {action, target, meta} = req.data as {
-      action: string;
-      target?: string;
-      meta?: Record<string, unknown>;
-    };
-    if (!action || typeof action !== "string") {
-      throw new HttpsError("invalid-argument", "action required.");
-    }
+    const action = cleanString(req.data?.action, "action", 120);
+    const target = req.data?.target == null ? null : cleanString(req.data.target, "target", 160);
+    const meta = cleanAuditMeta(req.data?.meta);
 
     const row = {
       actorUid: uid,
       actorEmail: req.auth?.token?.email ?? null,
       action,
-      target: target ?? null,
-      meta: meta ?? null,
+      target,
+      meta,
       ip: req.rawRequest.ip ?? null,
       userAgent: req.rawRequest.headers["user-agent"] ?? null,
       at: FieldValue.serverTimestamp(),
@@ -1204,10 +1232,9 @@ export const setFeatureFlag = onCall(
   {region: "us-central1"},
   async (req) => {
     const uid = requireDeveloper(req);
-    const {key, value} = req.data as {key: string; value: boolean};
-    if (!key || typeof value !== "boolean") {
-      throw new HttpsError("invalid-argument", "key + boolean value required.");
-    }
+    const key = cleanString(req.data?.key, "key", 80);
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new HttpsError("invalid-argument", "Invalid feature key.");
+    const value = cleanBoolean(req.data?.value, "value");
     await getFirestore().doc("featureFlags/global").set(
       {
         [key]: value,
@@ -1229,8 +1256,7 @@ export const forceSignOut = onCall(
   {region: "us-central1"},
   async (req) => {
     requireDeveloper(req);
-    const {targetUid} = req.data as {targetUid: string};
-    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid required.");
+    const targetUid = cleanUid(req.data?.targetUid, "targetUid");
     await getAuth().revokeRefreshTokens(targetUid);
     await getFirestore().doc(`staffSessions/${targetUid}`).set(
       {revokedAt: FieldValue.serverTimestamp(), mfaVerifiedAt: null},

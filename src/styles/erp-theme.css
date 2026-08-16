@@ -92,31 +92,31 @@
 
 /* Dark mode within the ERP surface. */
 .dark .erp-theme {
-  --background: #100D1C;
-  --background-secondary: #16112A;
-  --foreground: #EDE9FE;
-  --card: #1A1430;
-  --card-foreground: #EDE9FE;
-  --popover: #1F1838;
-  --popover-foreground: #EDE9FE;
+  --background: #0B0D10;
+  --background-secondary: #101419;
+  --foreground: #F3F4F6;
+  --card: #12161B;
+  --card-foreground: #F3F4F6;
+  --popover: #171B21;
+  --popover-foreground: #F3F4F6;
   --primary: var(--erp-emerald);
   --primary-foreground: #FFFFFF;
   --secondary: var(--erp-mint);
-  --secondary-foreground: #2E1065;
+  --secondary-foreground: #111827;
   --accent: var(--erp-emerald);
   --accent-foreground: #FFFFFF;
-  --muted: #1F1838;
-  --muted-foreground: rgba(237, 233, 254, 0.6);
+  --muted: #171B21;
+  --muted-foreground: rgba(243, 244, 246, 0.64);
   --border: rgba(255, 255, 255, 0.09);
   --border-light: rgba(255, 255, 255, 0.05);
   --input-background: rgba(255, 255, 255, 0.04);
-  --switch-background: #2A2145;
+  --switch-background: #2B323B;
   --ring: var(--erp-emerald);
   --true-gold: var(--erp-emerald);
   --antique-gold: var(--erp-mint);
   --gradient-gold: linear-gradient(135deg, #8B5CF6 0%, #C4B5FD 100%);
   --gradient-gold-subtle: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(196, 181, 253, 0.08) 100%);
-  --sidebar: #0C0819;
+  --sidebar: #080A0D;
 
   /* Deeper, ambient shadows for the dark ERP surface. */
   --erp-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -124,7 +124,7 @@
   --erp-shadow-lg: 0 4px 10px rgba(0, 0, 0, 0.45), 0 32px 60px -18px rgba(0, 0, 0, 0.7);
   --erp-shadow-glow: 0 0 0 1px rgba(139, 92, 246, 0.22), 0 18px 44px -12px rgba(139, 92, 246, 0.32);
   --erp-hairline: rgba(255, 255, 255, 0.08);
-  --erp-glass-bg: rgba(26, 20, 48, 0.66);
+  --erp-glass-bg: rgba(18, 22, 27, 0.78);
   --erp-glass-border: rgba(255, 255, 255, 0.08);
   --erp-tint: rgba(139, 92, 246, 0.08);
 }

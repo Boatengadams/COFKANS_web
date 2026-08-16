@@ -133,11 +133,49 @@ function cleanString(value, field, max) {
     if (typeof value !== "string") {
         throw new https_1.HttpsError("invalid-argument", `${field} must be a string.`);
     }
-    const cleaned = value.trim();
+    // Treat every callable payload as hostile input. Normalize Unicode, remove
+    // control characters, collapse whitespace, then enforce the limit.
+    const cleaned = value
+        .normalize("NFKC")
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
     if (!cleaned || cleaned.length > max) {
         throw new https_1.HttpsError("invalid-argument", `${field} is required and must be ${max} characters or fewer.`);
     }
     return cleaned;
+}
+function cleanUid(value, field) {
+    const uid = cleanString(value, field, 128);
+    if (!/^[A-Za-z0-9:_-]+$/.test(uid)) {
+        throw new https_1.HttpsError("invalid-argument", `${field} is invalid.`);
+    }
+    return uid;
+}
+function cleanBoolean(value, field) {
+    if (typeof value !== "boolean")
+        throw new https_1.HttpsError("invalid-argument", `${field} must be boolean.`);
+    return value;
+}
+function cleanAuditMeta(value, depth = 0) {
+    if (value == null)
+        return null;
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 2) {
+        throw new https_1.HttpsError("invalid-argument", "meta must be a plain object.");
+    }
+    const output = {};
+    for (const [key, raw] of Object.entries(value).slice(0, 40)) {
+        const safeKey = cleanString(key, "meta key", 80);
+        if (typeof raw === "string")
+            output[safeKey] = cleanString(raw, `meta.${safeKey}`, 500);
+        else if (typeof raw === "number" || typeof raw === "boolean" || raw === null)
+            output[safeKey] = raw;
+        else if (Array.isArray(raw))
+            output[safeKey] = raw.slice(0, 20).map((item) => typeof item === "string" ? cleanString(item, `meta.${safeKey}`, 200) : item);
+        else
+            output[safeKey] = cleanAuditMeta(raw, depth + 1);
+    }
+    return output;
 }
 function optionalCleanString(value, field, max) {
     if (value == null || value === "")
@@ -918,10 +956,8 @@ exports.provisionStaffAccount = (0, https_1.onCall)({ region: "us-central1" }, a
 // ---------------------------------------------------------------------------
 exports.setDeveloperClaim = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
     const actor = requireDeveloper(req);
-    const { targetUid, grant } = req.data;
-    if (!targetUid || typeof grant !== "boolean") {
-        throw new https_1.HttpsError("invalid-argument", "targetUid + grant required.");
-    }
+    const targetUid = cleanUid(req.data?.targetUid, "targetUid");
+    const grant = cleanBoolean(req.data?.grant, "grant");
     if (targetUid === actor && !grant) {
         throw new https_1.HttpsError("failed-precondition", "Cannot revoke your own claim from the portal — use the CLI.");
     }
@@ -967,9 +1003,9 @@ exports.enrollTotp = (0, https_1.onCall)({ region: "us-central1" }, async (req) 
 // ---------------------------------------------------------------------------
 exports.verifyTotp = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
     const uid = requireDeveloper(req);
-    const { code } = req.data;
-    if (!code || typeof code !== "string") {
-        throw new https_1.HttpsError("invalid-argument", "code required.");
+    const code = cleanString(req.data?.code, "code", 32).toUpperCase();
+    if (!/^\d{6}$/.test(code) && !/^[A-Z0-9]{8}$/.test(code)) {
+        throw new https_1.HttpsError("invalid-argument", "Invalid verification code.");
     }
     const snap = await (0, firestore_1.getFirestore)().doc(`totpSecrets/${uid}`).get();
     if (!snap.exists) {
@@ -1012,16 +1048,15 @@ async function hashString(input) {
 // ---------------------------------------------------------------------------
 exports.auditLog = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
     const uid = requireDeveloper(req);
-    const { action, target, meta } = req.data;
-    if (!action || typeof action !== "string") {
-        throw new https_1.HttpsError("invalid-argument", "action required.");
-    }
+    const action = cleanString(req.data?.action, "action", 120);
+    const target = req.data?.target == null ? null : cleanString(req.data.target, "target", 160);
+    const meta = cleanAuditMeta(req.data?.meta);
     const row = {
         actorUid: uid,
         actorEmail: req.auth?.token?.email ?? null,
         action,
-        target: target ?? null,
-        meta: meta ?? null,
+        target,
+        meta,
         ip: req.rawRequest.ip ?? null,
         userAgent: req.rawRequest.headers["user-agent"] ?? null,
         at: firestore_1.FieldValue.serverTimestamp(),
@@ -1048,10 +1083,10 @@ exports.auditLog = (0, https_1.onCall)({ region: "us-central1" }, async (req) =>
 // ---------------------------------------------------------------------------
 exports.setFeatureFlag = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
     const uid = requireDeveloper(req);
-    const { key, value } = req.data;
-    if (!key || typeof value !== "boolean") {
-        throw new https_1.HttpsError("invalid-argument", "key + boolean value required.");
-    }
+    const key = cleanString(req.data?.key, "key", 80);
+    if (!/^[A-Za-z0-9_-]+$/.test(key))
+        throw new https_1.HttpsError("invalid-argument", "Invalid feature key.");
+    const value = cleanBoolean(req.data?.value, "value");
     await (0, firestore_1.getFirestore)().doc("featureFlags/global").set({
         [key]: value,
         [`${key}__updatedBy`]: uid,
@@ -1066,9 +1101,7 @@ exports.setFeatureFlag = (0, https_1.onCall)({ region: "us-central1" }, async (r
 // ---------------------------------------------------------------------------
 exports.forceSignOut = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
     requireDeveloper(req);
-    const { targetUid } = req.data;
-    if (!targetUid)
-        throw new https_1.HttpsError("invalid-argument", "targetUid required.");
+    const targetUid = cleanUid(req.data?.targetUid, "targetUid");
     await (0, auth_1.getAuth)().revokeRefreshTokens(targetUid);
     await (0, firestore_1.getFirestore)().doc(`staffSessions/${targetUid}`).set({ revokedAt: firestore_1.FieldValue.serverTimestamp(), mfaVerifiedAt: null }, { merge: true });
     return { ok: true };

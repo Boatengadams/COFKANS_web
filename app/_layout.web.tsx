@@ -34,6 +34,6 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     minHeight: '100vh',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--background)',
   },
 };

@@ -93,10 +93,10 @@ function CardMedia({ imageSrc, videoSrc, alt }: { imageSrc: string; videoSrc?: s
       onPointerLeave={stop}
     >
       {imgState === 'loading' && (
-        <div className="absolute inset-0 bg-muted animate-pulse" aria-hidden />
+        <div className="absolute inset-0 bg-muted dark:bg-white animate-pulse" aria-hidden />
       )}
       {imgState === 'error' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-muted to-muted/60 gap-2">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-muted to-muted/60 dark:!bg-white gap-2">
           <svg width="40" height="40" viewBox="0 0 40 40" fill="none" className="opacity-20">
             <rect x="4" y="4" width="32" height="32" rx="4" stroke="currentColor" strokeWidth="2"/>
             <circle cx="14" cy="15" r="4" stroke="currentColor" strokeWidth="2"/>
@@ -719,7 +719,7 @@ export function ProductCatalog({ user, onRequireAuth, initialCategory = 'all' }:
             >
               {/* Product Image */}
               <div
-                className={`pc-media relative overflow-hidden bg-gradient-to-br from-muted/80 via-card to-muted/30 ${
+                className={`pc-media product-image-surface relative overflow-hidden bg-gradient-to-br from-muted/80 via-card to-muted/30 ${
                   viewMode === 'grid' ? 'aspect-square' : 'w-32 h-32 sm:w-64 sm:h-64 flex-shrink-0'
                 }`}
               >

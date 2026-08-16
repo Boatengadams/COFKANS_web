@@ -37,9 +37,20 @@ export function portalToast(title: string, body?: string) {
       boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
       fontSize: '13px',
     } as CSSStyleDeclaration);
-    node.innerHTML = `<div style="font-weight:800">${title}</div>${
-      body ? `<div style="color:#94A3B8;margin-top:2px">${body}</div>` : ''
-    }`;
+
+    const titleNode = document.createElement('div');
+    titleNode.style.fontWeight = '800';
+    titleNode.textContent = title;
+    node.appendChild(titleNode);
+
+    if (body) {
+      const bodyNode = document.createElement('div');
+      bodyNode.style.color = '#94A3B8';
+      bodyNode.style.marginTop = '2px';
+      bodyNode.textContent = body;
+      node.appendChild(bodyNode);
+    }
+
     root.appendChild(node);
     setTimeout(() => {
       node.style.transition = 'opacity .3s';

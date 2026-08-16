@@ -379,6 +379,7 @@ service cloud.firestore {
       // Branch riders can read orders at their branch (so they see the queue).
       allow read: if isOwner(resource.data.userId) ||
                      isAdmin() ||
+                     isManager() ||
                      isTechnician() ||
                      (isDriver() && request.auth.uid == resource.data.driverId) ||
                      (resource.data.branchSlug != null &&
@@ -423,6 +424,16 @@ service cloud.firestore {
       // OWASP A01: Only admins can delete orders (soft delete recommended)
       allow delete: if isAdmin();
     }
+
+    // Manager workspace collections. Managers can read operational records;
+    // writes remain owned by their dedicated server workflows.
+    match /branches/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
+    match /inventory/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
+    match /stockTransfers/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
+    match /stockRequests/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
+    match /approvals/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
+    match /reports/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
+    match /spreadsheet/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
 
     // ===== REVIEWS COLLECTION - ENHANCED SECURITY =====
 

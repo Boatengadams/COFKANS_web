@@ -16,7 +16,7 @@ import {
  * Firebase Auth users plus Firestore staff records instead.
  */
 export type { AppEnvironment } from '../../lib/environment';
-export { APP_ENV_WARNING, getPublicEnv } from '../../lib/environment';
+export { APP_ENV, APP_ENV_WARNING, getPublicEnv } from '../../lib/environment';
 
 export const IS_WEB = Platform.OS === 'web';
 export const USE_LIVE_BACKEND = true;

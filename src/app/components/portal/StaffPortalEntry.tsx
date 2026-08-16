@@ -5,7 +5,7 @@
  * in demo-mode storage. Dedicated Expo Router routes then render the same
  * branch workspace with the current user's role and branch context.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'expo-router';
 import { FirebaseAuthProvider, useFirebaseAuth } from '../../contexts/FirebaseAuthContext';
 import { BranchWorkspace } from '../BranchWorkspace';
@@ -33,16 +33,28 @@ const ROLE_ROUTE: Partial<Record<DemoRole, string>> = {
   developer: '/developer-portal',
 };
 
+const isDemoRole = (role: string): role is DemoRole => role in ROLE_ROUTE || role === 'guest' || role === 'customer';
+
+const toPortalDemoRole = (role: string | null): DemoRole => {
+  if (role === 'transport_driver') return 'driver';
+  return role && isDemoRole(role) ? role : 'guest';
+};
+
 const Spinner = () => (
-  <div className="flex min-h-screen items-center justify-center bg-background">
-    <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+  <div className="erp-theme flex min-h-screen items-center justify-center bg-background">
+    <div className="flex flex-col items-center gap-4">
+      <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      <p className="text-sm text-muted-foreground">Loading your portal…</p>
+    </div>
   </div>
 );
 
 function StaffPortalEntryInner({
   allowedRoles,
+  children,
 }: {
   allowedRoles: DemoRole[];
+  children?: ReactNode;
 }) {
   const router = useRouter();
   const { firebaseUser, isLoading: authLoading } = useFirebaseAuth();
@@ -60,7 +72,9 @@ function StaffPortalEntryInner({
     };
   }, []);
 
-  const role = DEMO_MODE ? demoRole : (staffKind ?? 'none');
+  const role: DemoRole = DEMO_MODE
+    ? demoRole
+    : toPortalDemoRole(staffKind);
   const isLoading = authLoading || (!DEMO_MODE && roleLoading);
 
   useEffect(() => {
@@ -81,10 +95,10 @@ function StaffPortalEntryInner({
 
   if (isLoading || !firebaseUser || !allowedRoles.includes(role)) return <Spinner />;
 
-  return <BranchWorkspace initialEntry={initialEntry} />;
+  return children ? <>{children}</> : <BranchWorkspace initialEntry={initialEntry} />;
 }
 
-export function StaffPortalEntry(props: { allowedRoles: DemoRole[] }) {
+export function StaffPortalEntry(props: { allowedRoles: DemoRole[]; children?: ReactNode }) {
   return (
     <FirebaseAuthProvider>
       <StaffPortalEntryInner {...props} />

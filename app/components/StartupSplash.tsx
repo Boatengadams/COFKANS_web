@@ -6,22 +6,25 @@ import {
   Image,
   Platform,
   StyleSheet,
-  Text,
+  useColorScheme,
+  useWindowDimensions,
   View,
   type ImageSourcePropType,
   type ImageStyle,
-  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 import { Asset } from 'expo-asset';
 import * as SplashScreen from 'expo-splash-screen';
 
-import cofkansLogo from '../../src/imports/cofkans.png';
+import cofkansLogo from '../../src/app/pages/manager-figma/imports/cofkans-BFw8TZ-5.png';
 
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 
-const EXIT_TIME = 420;
-const SAFETY_HIDE_TIME = 12000;
+const EXIT_TIME = 280;
+// Keep a polished transition without holding staff users behind an artificial
+// five-second delay. Auth and first render readiness still gate the exit.
+const MIN_SPLASH_TIME = 1200;
+const SAFETY_HIDE_TIME = Platform.OS === 'web' ? 15000 : 12000;
 const WEB_AUTH_READY_EVENT = 'cofkans:auth-ready';
 const easeOut = Easing.bezier(0.22, 1, 0.36, 1);
 const logoSource = cofkansLogo as ImageSourcePropType;
@@ -40,24 +43,41 @@ export function StartupSplash({
   ready?: boolean;
 }) {
   const [visible, setVisible] = useState(true);
-  const [assetReady, setAssetReady] = useState(false);
-  const [contentLaidOut, setContentLaidOut] = useState(false);
+  const [assetReady, setAssetReady] = useState(Platform.OS === 'web');
+  const [contentLaidOut, setContentLaidOut] = useState(Platform.OS === 'web');
   const [webAuthReady, setWebAuthReady] = useState(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return true;
-    // Start as false; auth must explicitly signal ready via event.
-    // This prevents incorrectly thinking auth is ready before FirebaseAuthProvider mounts.
-    return false;
+    // The web layout marks auth as pending before this component mounts. If a
+    // provider has already finished, do not wait for an event that has fired.
+    return window.__cofkansAuthBootPending !== true;
   });
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [webDark, setWebDark] = useState(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return false;
+    try {
+      const storedTheme = window.localStorage.getItem('theme');
+      return document.documentElement.classList.contains('dark') ||
+        (storedTheme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    } catch {
+      return document.documentElement.classList.contains('dark');
+    }
+  });
+  const systemColorScheme = useColorScheme();
+  const isDark = Platform.OS === 'web' ? webDark : systemColorScheme === 'dark';
+  const { width } = useWindowDimensions();
   const closing = useRef(false);
   const opacity = useRef(new Animated.Value(1)).current;
+  const exitTranslate = useRef(new Animated.Value(0)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentScale = useRef(new Animated.Value(0.94)).current;
-  const glowOpacity = useRef(new Animated.Value(0.62)).current;
   const progress = useRef(new Animated.Value(0)).current;
   const nativeSplashHidden = useRef(false);
+  const mountedAt = useRef(Date.now());
 
   useEffect(() => {
+    // Metro's web bundle can display the image directly; waiting for
+    // expo-asset here only adds a network/decoding round trip to first paint.
+    if (Platform.OS === 'web') return;
     let mounted = true;
 
     Asset.loadAsync([cofkansLogo])
@@ -68,6 +88,69 @@ export function StartupSplash({
 
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    // The app is already mounted underneath the splash. Use this intentional
+    // startup window to warm the browser cache for the first images it has
+    // rendered, without blocking the main thread or forcing large videos to
+    // download before the user asks to play them.
+    const warmMedia = () => {
+      const images = Array.from(document.images)
+        .map(image => image.currentSrc || image.src)
+        .filter(Boolean)
+        .slice(0, 12);
+
+      images.forEach(src => {
+        const preload = new window.Image();
+        preload.decoding = 'async';
+        preload.src = src;
+      });
+
+      document.querySelectorAll<HTMLVideoElement>('video[poster]').forEach(video => {
+        const poster = video.poster;
+        if (!poster) return;
+        const preload = new window.Image();
+        preload.decoding = 'async';
+        preload.src = poster;
+      });
+    };
+
+    const idle = 'requestIdleCallback' in window
+      ? window.requestIdleCallback(warmMedia, { timeout: 800 })
+      : globalThis.setTimeout(warmMedia, 120);
+
+    return () => {
+      if ('cancelIdleCallback' in window && typeof idle === 'number') {
+        window.cancelIdleCallback(idle);
+      } else {
+        window.clearTimeout(idle as number);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const syncTheme = () => {
+      const storedTheme = window.localStorage.getItem('theme');
+      setWebDark(
+        document.documentElement.classList.contains('dark') ||
+        (storedTheme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches),
+      );
+    };
+
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    window.addEventListener('storage', syncTheme);
+    syncTheme();
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('storage', syncTheme);
     };
   }, []);
 
@@ -86,11 +169,13 @@ export function StartupSplash({
     // Listen for auth-ready signal. Update state when the signal fires.
     const syncAuthReady = () => setWebAuthReady(!window.__cofkansAuthBootPending);
     window.addEventListener(WEB_AUTH_READY_EVENT, syncAuthReady);
+    syncAuthReady();
 
     return () => window.removeEventListener(WEB_AUTH_READY_EVENT, syncAuthReady);
   }, []);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion).catch(() => {});
 
     const subscription = AccessibilityInfo.addEventListener?.('reduceMotionChanged', setReduceMotion);
@@ -119,52 +204,37 @@ export function StartupSplash({
       }),
     ]).start();
 
-    const glowLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowOpacity, {
-          toValue: 1,
-          duration: 1500,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(glowOpacity, {
-          toValue: 0.62,
-          duration: 1500,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-
-    const progressLoop = Animated.loop(
-      Animated.timing(progress, {
-        toValue: 1,
-        duration: 1250,
-        easing: easeOut,
-        useNativeDriver: true,
-      }),
-    );
-
-    glowLoop.start();
-    progressLoop.start();
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: MIN_SPLASH_TIME,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
 
     return () => {
-      glowLoop.stop();
-      progressLoop.stop();
+      progress.stopAnimation();
     };
-  }, [contentOpacity, contentScale, glowOpacity, progress, reduceMotion]);
+  }, [contentOpacity, contentScale, progress, reduceMotion]);
 
   const closeSplash = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
 
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: reduceMotion ? 180 : EXIT_TIME,
-      easing: easeOut,
-      useNativeDriver: true,
-    }).start(() => setVisible(false));
-  }, [opacity, reduceMotion]);
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: reduceMotion ? 180 : EXIT_TIME,
+        easing: easeOut,
+        useNativeDriver: true,
+      }),
+      Animated.timing(exitTranslate, {
+        toValue: reduceMotion ? 0 : -Math.max(width, 360),
+        duration: reduceMotion ? 180 : EXIT_TIME,
+        easing: easeOut,
+        useNativeDriver: true,
+      }),
+    ]).start(() => setVisible(false));
+  }, [exitTranslate, opacity, reduceMotion, width]);
 
   const hideNativeSplash = useCallback(() => {
     if (nativeSplashHidden.current || Platform.OS === 'web') return;
@@ -176,17 +246,22 @@ export function StartupSplash({
     if (!visible) return;
     if (!ready || !assetReady || !contentLaidOut || !webAuthReady) return;
 
+    const remaining = Math.max(0, MIN_SPLASH_TIME - (Date.now() - mountedAt.current));
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
     let secondFrame = 0;
     const firstFrame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(() => {
-        hideNativeSplash();
-        closeSplash();
+        closeTimer = setTimeout(() => {
+          hideNativeSplash();
+          closeSplash();
+        }, remaining);
       });
     });
 
     return () => {
       cancelAnimationFrame(firstFrame);
       if (secondFrame) cancelAnimationFrame(secondFrame);
+      if (closeTimer) clearTimeout(closeTimer);
     };
   }, [assetReady, closeSplash, contentLaidOut, hideNativeSplash, ready, visible, webAuthReady]);
 
@@ -199,9 +274,9 @@ export function StartupSplash({
     return () => clearTimeout(safetyTimer);
   }, [closeSplash, hideNativeSplash]);
 
-  const progressTranslate = progress.interpolate({
+  const progressWidth = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [-120, 220],
+    outputRange: ['0%', '100%'],
   });
 
   return (
@@ -217,9 +292,13 @@ export function StartupSplash({
           accessibilityLabel="Cofkans Electricals is preparing your experience"
           accessibilityRole="progressbar"
           pointerEvents="auto"
-          style={[styles.splash, Platform.OS === 'web' ? styles.webSplash : null, { opacity }]}
+          style={[
+            styles.splash,
+            Platform.OS === 'web' ? styles.webSplash : null,
+            isDark ? styles.splashDark : styles.splashLight,
+            { opacity, transform: [{ translateX: exitTranslate }] },
+          ]}
         >
-          <Animated.View style={[styles.glow, { opacity: reduceMotion ? 0.72 : glowOpacity }]} />
           <Animated.View
             style={[
               styles.content,
@@ -229,18 +308,19 @@ export function StartupSplash({
               },
             ]}
           >
-            <Image source={logoSource} resizeMode="contain" style={styles.logo} />
+            <View style={[styles.logoFrame, isDark ? styles.logoFrameDark : styles.logoFrameLight]}>
+              <Image source={logoSource} resizeMode="contain" style={styles.logo} />
+            </View>
             <View style={styles.progressTrack}>
               {!reduceMotion ? (
                 <Animated.View
                   style={[
-                    styles.progressLight,
-                    { transform: [{ translateX: progressTranslate }] },
+                    styles.progressFill,
+                    { width: progressWidth },
                   ]}
                 />
-              ) : null}
+              ) : <View style={[styles.progressFill, { width: '100%' }]} />}
             </View>
-            <Text style={styles.caption}>Preparing your experience</Text>
           </Animated.View>
         </Animated.View>
       ) : null}
@@ -253,12 +333,15 @@ const styles = StyleSheet.create<{
   contentHost: ViewStyle;
   splash: ViewStyle;
   webSplash: ViewStyle;
-  glow: ViewStyle;
+  splashLight: ViewStyle;
+  splashDark: ViewStyle;
   content: ViewStyle;
+  logoFrame: ViewStyle;
+  logoFrameLight: ViewStyle;
+  logoFrameDark: ViewStyle;
   logo: ImageStyle;
   progressTrack: ViewStyle;
-  progressLight: ViewStyle;
-  caption: TextStyle;
+  progressFill: ViewStyle;
 }>({
   shell: {
     flex: 1,
@@ -276,50 +359,65 @@ const styles = StyleSheet.create<{
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-    backgroundColor: '#fbf9ff',
+  },
+  splashLight: {
+    backgroundColor: '#FBF9FF',
+  },
+  splashDark: {
+    backgroundColor: '#090C14',
   },
   webSplash: {
     position: 'fixed' as never,
     width: '100vw' as never,
     height: '100vh' as never,
   },
-  glow: {
-    position: 'absolute',
-    width: 440,
-    maxWidth: '78%',
-    aspectRatio: 1,
-    borderRadius: 220,
-    backgroundColor: 'rgba(126, 87, 194, 0.14)',
-    transform: [{ scale: 1.02 }],
-  },
   content: {
-    width: '76%',
-    maxWidth: 304,
+    width: '80%',
+    maxWidth: 360,
     alignItems: 'center',
-    gap: 18,
+    gap: 24,
+  },
+  logoFrame: {
+    width: '100%',
+    maxWidth: 320,
+    minHeight: 128,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    shadowColor: '#8B6B2E',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 5,
+  },
+  logoFrameLight: {
+    backgroundColor: '#050914',
+    borderWidth: 1,
+    borderColor: '#C9A96E',
+  },
+  logoFrameDark: {
+    backgroundColor: '#0D1117',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
   logo: {
-    width: '86%',
-    maxWidth: 252,
+    width: '100%',
+    maxWidth: 300,
     height: 104,
   },
   progressTrack: {
-    width: 140,
-    height: 2,
+    width: 190,
+    height: 4,
     overflow: 'hidden',
     borderRadius: 999,
-    backgroundColor: 'rgba(103, 58, 183, 0.16)',
+    backgroundColor: 'rgba(201, 169, 110, 0.16)',
   },
-  progressLight: {
-    width: 68,
-    height: 2,
+  progressFill: {
+    width: '0%',
+    height: 4,
     borderRadius: 999,
-    backgroundColor: '#6f42c1',
-  },
-  caption: {
-    color: 'rgba(52, 34, 79, 0.54)',
-    fontSize: 12,
-    fontWeight: '500',
-    lineHeight: 17,
+    backgroundColor: '#C9A96E',
   },
 });

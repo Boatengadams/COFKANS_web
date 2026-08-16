@@ -41,6 +41,18 @@ export function StaffPortalHost() {
   const [role, setRole] = useState<DemoRole>(() => getDemoRole());
   const [Workspace, setWorkspace] = useState<WorkspaceComponent | null>(null);
 
+  // Manager has a dedicated canonical route (/manager). The storefront used
+  // to mount the legacy branch workspace in-place, so browser Back could
+  // expose a second, outdated manager portal. Keep the legacy host available
+  // for the other staff previews, but always send managers to the canonical
+  // portal.
+  useEffect(() => {
+    if (!IS_WEB || role !== 'manager' || typeof window === 'undefined') return;
+    if (!window.location.pathname.replace(/\/$/, '').endsWith('/manager')) {
+      window.location.replace('/manager');
+    }
+  }, [role]);
+
   // React to demo role changes (no startTransition needed — we never mount a
   // suspending component synchronously; the workspace is loaded in an effect).
   useEffect(() => {
@@ -87,7 +99,7 @@ export function StaffPortalHost() {
     return u.role ? branchLandingPath(u.branchId, u.role) : '/branches';
   }, [role]);
 
-  if (!isStaff) return null;
+  if (!isStaff || isManagerRole(role)) return null;
 
   return (
     <div className="erp-theme fixed inset-0 z-[9000] overflow-auto bg-background">
@@ -98,6 +110,10 @@ export function StaffPortalHost() {
       </PortalErrorBoundary>
     </div>
   );
+}
+
+function isManagerRole(role: DemoRole): boolean {
+  return role === 'manager';
 }
 
 export default StaffPortalHost;
