@@ -63,8 +63,6 @@ async function resolveLoginDestination(email: string): Promise<string | null> {
   return kind === 'none' ? null : portalRoute(kind);
 }
 
-import '../pages/manager-figma/index.css';
-
 export default function StaffLoginPage() {
   const { signInWithEmail, resetPassword } = useFirebaseAuth();
   const router = useRouter();
@@ -119,7 +117,7 @@ export default function StaffLoginPage() {
     );
   }
 
-  return <div className="manager-portal"><LoginForm onSubmit={handleLogin} submitting={submitting} error={error} setError={setError} resetPassword={resetPassword} /></div>;
+  return <LoginForm onSubmit={handleLogin} submitting={submitting} error={error} setError={setError} resetPassword={resetPassword} />;
 }
 
 function LoginForm({ onSubmit, submitting, error, setError, resetPassword }: {

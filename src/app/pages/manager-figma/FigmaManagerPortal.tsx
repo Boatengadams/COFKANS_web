@@ -2,11 +2,13 @@ import { useState, type ComponentType, type ReactNode } from 'react'
 import Dashboard from './pages/Dashboard'
 import Branches from './pages/Branches'
 import Settings from './pages/Settings'
+import Sidebar from './components/Sidebar'
+import TopBar from './components/TopBar'
 import { useFirebaseAuth } from '../../contexts/FirebaseAuthContext'
 import { useManagerCollection, displayValue, dateValue } from './manager-live-data'
-import { BarChart3, CheckCircle2, FileSpreadsheet, FolderOpen, LayoutDashboard, LogOut, PackageOpen, Settings2, Sparkles, GitBranch, Package, TrendingUp, Users, Table2 } from 'lucide-react'
+import { BarChart3, CheckCircle2, FileSpreadsheet, FolderOpen, PackageOpen, Sparkles } from 'lucide-react'
 import cofkansLogo from './imports/cofkans-BFw8TZ-5.png'
-import { ThemeToggle } from '../../components/ThemeToggle'
+import { DEFAULT_HERO_SLIDES } from '../../../lib/hero-slides'
 import './index.css'
 
 const PAGE_ICONS = {
@@ -17,17 +19,6 @@ const PAGE_ICONS = {
   reports: BarChart3,
   spreadsheet: FileSpreadsheet,
 }
-
-const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'branches', label: 'Branches', icon: GitBranch },
-  { id: 'inventory', label: 'Inventory', icon: Package },
-  { id: 'sales', label: 'Sales', icon: TrendingUp },
-  { id: 'employees', label: 'Employees', icon: Users },
-  { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
-  { id: 'reports', label: 'Reports', icon: BarChart3 },
-  { id: 'spreadsheet', label: 'Spreadsheet', icon: Table2 },
-]
 
 function PageIntro({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
   return <div className="manager-page-intro">
@@ -111,31 +102,40 @@ export function FigmaManagerPortal() {
   const { signOut } = useFirebaseAuth()
 
   return (
-    <div
-      className="manager-portal"
-      style={{
-        display: 'flex',
-        height: '100vh',
-        minHeight: '100vh',
-        overflow: 'hidden',
-        background: 'var(--background)',
-      }}
-    >
-      <div className="manager-demo-shell">
-        <header className="manager-demo-header">
-          <div className="manager-demo-header-inner">
-            <div className="manager-demo-brand">
-              <div className="manager-demo-logo"><img src={typeof cofkansLogo === 'string' ? cofkansLogo : (cofkansLogo as { uri: string }).uri} alt="Cofkans Electricals" /></div>
-              <div><span>Manager Portal</span><strong>All branches · live access</strong></div>
-            </div>
-            <div className="manager-demo-actions"><ThemeToggle /><button className="manager-signout" type="button" onClick={() => void signOut()} title="Sign out"><LogOut size={15} /><span>Sign out</span></button></div>
+    <div className="min-h-screen grid lg:grid-cols-2 bg-background">
+      {/* Left: brand / hero panel (from staff login design) */}
+      <div className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-[#0B1220] p-12 text-white">
+        <img src={typeof DEFAULT_HERO_SLIDES !== 'undefined' ? DEFAULT_HERO_SLIDES[0]?.img : ''} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
+        <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(11,18,32,.88), rgba(11,18,32,.45) 58%, rgba(11,18,32,.78))' }} />
+        <div className="absolute inset-x-0 top-0 h-1 bg-[#F5A524]" />
+        <div className="absolute inset-y-0 right-0 w-1/3 bg-[#F5A524]/10" />
+        <div className="relative">
+          <div className="inline-flex h-[76px] w-[178px] items-center justify-center rounded-xl bg-slate-950 px-4 py-2 shadow-lg ring-1 ring-white/15">
+            <img src={typeof cofkansLogo === 'string' ? cofkansLogo : (cofkansLogo as any).uri} alt="Cofkans Electricals" className="h-12 w-auto object-contain" />
           </div>
-          <nav className="manager-demo-nav" aria-label="Manager portal sections">
-            {NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => setPage(id)} className={page === id ? 'active' : ''}><Icon size={14} />{label}</button>)}
-            <button type="button" onClick={() => setPage('settings')} className={page === 'settings' ? 'active' : ''}><Settings2 size={14} />Settings</button>
-          </nav>
-        </header>
-        <main className="manager-demo-content"><PageWrapper pageKey={page}><PageComponent /></PageWrapper></main>
+          <p className="mt-3 text-xs font-bold uppercase tracking-[0.2em] text-[#F5A524]">Manager Portal</p>
+        </div>
+        <div className="relative flex min-h-[21rem] max-w-sm items-center justify-center">
+          <div className="h-1.5 w-10 rounded-full bg-[#F5A524]" aria-hidden="true" />
+        </div>
+        <div className="relative text-xs text-white/70">Manager workspace</div>
+      </div>
+
+      {/* Right: existing manager UI rendered inside the staff-login shell */}
+      <div className="flex items-center justify-center px-4 py-10 bg-background">
+        <div className="w-full max-w-[1400px]" style={{ minHeight: '100vh' }}>
+          <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--background)' }}>
+            <Sidebar active={page} onNav={setPage} />
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+              <TopBar page={page} onSignOut={signOut} />
+              <main style={{ flex: 1, overflowY: 'auto', background: 'var(--background)' }}>
+                <PageWrapper pageKey={page}>
+                  <PageComponent />
+                </PageWrapper>
+              </main>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

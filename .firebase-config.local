@@ -1,0 +1,54 @@
+# Firebase Configuration Values (Fill These In)
+#
+# After completing FIREBASE_SETUP_STEP1.md, fill in these values from the Firebase Console.
+# Then use these to populate your .env.local and CI/CD secrets.
+#
+# ⚠️ NEVER COMMIT THIS FILE — it contains sensitive project IDs and API keys.
+# Store this locally only (not in git).
+
+# ============================================================================
+# STAGING PROJECT
+# ============================================================================
+
+STAGING_PROJECT_ID=cofkans-staging
+STAGING_FIREBASE_API_KEY=AIzaSyDnVJOG4LUa0N3tQUXN8J0GC0yyXc0OKhQ
+STAGING_FIREBASE_AUTH_DOMAIN=cofkans-staging.firebaseapp.com
+STAGING_FIREBASE_STORAGE_BUCKET=cofkans-staging.firebasestorage.app
+STAGING_FIREBASE_MESSAGING_SENDER_ID=285961078595
+STAGING_FIREBASE_APP_ID=1:285961078595:web:ac95e2180bebb7e2a211f6
+STAGING_FIREBASE_MEASUREMENT_ID=G-WN4G7F31XS
+
+# App Check reCAPTCHA v3 site key for staging
+STAGING_FIREBASE_APPCHECK_SITE_KEY=
+
+# Service account key location
+STAGING_SERVICE_ACCOUNT_KEY_PATH=~/.config/cofkans-firebase-keys/staging.json
+
+# ============================================================================
+# PRODUCTION PROJECT
+# ============================================================================
+
+PRODUCTION_PROJECT_ID=cofkanselectricals-app
+PRODUCTION_FIREBASE_API_KEY=AIzaSyDlJsUkH29XuWu6C0jNvrMQlsXkZGIG1MQ
+PRODUCTION_FIREBASE_AUTH_DOMAIN=cofkanselectricals-app.firebaseapp.com
+PRODUCTION_FIREBASE_STORAGE_BUCKET=cofkanselectricals-app.firebasestorage.app
+PRODUCTION_FIREBASE_MESSAGING_SENDER_ID=179483760010
+PRODUCTION_FIREBASE_APP_ID=1:179483760010:web:19d21542e1899ace4ee473
+PRODUCTION_FIREBASE_MEASUREMENT_ID=G-SD7DFZJDXC
+
+# App Check reCAPTCHA v3 site key for production
+PRODUCTION_FIREBASE_APPCHECK_SITE_KEY=
+
+# Service account key location
+PRODUCTION_SERVICE_ACCOUNT_KEY_PATH=~/.config/cofkans-firebase-keys/production.json
+
+# ============================================================================
+# Additional Config (Common to Both)
+# ============================================================================
+
+# Your email (gates the developer portal)
+DEVELOPER_EMAIL=
+
+# Flutterwave payment keys (populated later, not needed for step 1)
+STAGING_FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-...
+PRODUCTION_FLUTTERWAVE_PUBLIC_KEY=FLWPUBK-...
