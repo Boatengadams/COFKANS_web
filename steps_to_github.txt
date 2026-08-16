@@ -1,0 +1,266 @@
+COFKANS Electricals - Steps Before Pushing To GitHub
+
+This file is a production-readiness checklist for cleaning the repository and pushing it to GitHub in a clean, professional state.
+
+
+1. Files and folders to delete or keep out of GitHub
+
+Delete these from the project folder before the final commit, or remove them from Git tracking if they are already tracked.
+
+- node_modules/
+  Why: Installed dependencies are huge and reproducible from pnpm-lock.yaml. GitHub should store package.json and pnpm-lock.yaml, not installed packages.
+
+- functions/node_modules/
+  Why: Firebase Functions dependencies are reproducible from functions/package-lock.json.
+
+- ce/node_modules/
+  Why: Same reason as node_modules/. Dependencies should never be committed.
+
+- .env
+  Why: Contains local/private runtime variables. Never push secrets, API keys, tokens, or production credentials.
+
+- .env.local
+  Why: Local-only environment values. Keep private and recreate from .env.example.
+
+- .env.development.local
+  Why: Local development values. Keep private and recreate locally.
+
+- .env.production.local
+  Why: Production environment values are sensitive and must not be public.
+
+- functions/.env
+  Why: Firebase Functions secrets must be configured through Firebase/Google Cloud secret management, not committed.
+
+- ce/.env.local
+  Why: Local environment values from the copied CE app tree. Do not publish private config.
+
+- .firebase-config.local
+  Why: Local Firebase config or credentials must not be committed.
+
+- .expo/
+  Why: Expo local cache, generated router types, local device data, and build cache. These are generated and can become stale.
+
+- dist/
+  Why: Generated Expo web export/build output. Production deploys should build from source or generate dist during CI/deploy. If GitHub Pages needs dist, use a deploy branch or workflow artifact instead of keeping build output in the main source tree.
+
+- ce/dist/
+  Why: Generated Vite build output from the CE copy. Build artifacts make the repo noisy and cause constant hashed-file changes.
+
+- database-debug.log
+  Why: Firebase emulator/debug output. It is local runtime noise.
+
+- firestore-debug.log
+  Why: Firebase emulator/debug output. It is local runtime noise.
+
+- ce/firestore-debug.log
+  Why: Firebase emulator/debug output inside the CE folder.
+
+- REPORTS.save
+  Why: Local saved output/scratch file, not production source.
+
+- REPORTS.save.1
+  Why: Local saved output/scratch file, not production source.
+
+- REPORTS.save.2
+  Why: Local saved output/scratch file, not production source.
+
+- .aider.chat.history.md
+  Why: AI assistant chat history. It is not app source and can expose private development notes.
+
+- .aider.input.history
+  Why: AI assistant input history. It is local-only.
+
+- .codex/
+  Why: Local Codex assistant state/config. Keep out of the public source repo unless the contents are intentionally project documentation.
+
+- .agents/
+  Why: Local assistant/agent metadata. Keep out of the production repo unless intentionally documented.
+
+- .kilo/
+  Why: Local tool state and its own node_modules. It is not production source.
+
+- Design_from _figma_/
+  Why: This looks like a separate copied Figma/prototype project. Keep it out of the production app repo unless it is intentionally part of the product source. If it is only design reference, archive it outside the repo or move useful docs into docs/.
+
+- ce/
+  Why: This appears to be a second copy/version of the app with its own package.json, lockfile, src, dist, and env file. Keeping two app trees makes the repo look duplicated and confusing. Before deleting it, compare it with the main src/app tree and migrate any unique production code or docs you still need.
+
+- plans/
+  Why: Looks like planning/scratch material. Keep only if it is useful project documentation. Otherwise move final useful notes into docs/ and delete the scratch folder.
+
+- src/imports/pasted_text/
+  Why: Imported prompt/spec scratch files can make the repo look unfinished. Keep only files that are actively used by the app or useful documentation.
+
+- ce/src/imports/pasted_text/
+  Why: Same as above, and it is inside the copied CE app tree.
+
+
+2. Update .gitignore before pushing
+
+Make sure .gitignore includes these patterns so the files above do not return:
+
+node_modules/
+functions/node_modules/
+ce/node_modules/
+.env
+.env.local
+.env.*.local
+functions/.env
+ce/.env.local
+.firebase-config.local
+.expo/
+dist/
+ce/dist/
+*.log
+REPORTS.save*
+.aider.*
+.codex/
+.agents/
+.kilo/
+
+Keep .env.example in GitHub because it documents the required environment variables without exposing real values.
+
+
+3. Files to review before pushing
+
+- README.md
+  Update project name, description, setup instructions, commands, environment variables, Firebase setup, testing, and deployment instructions.
+
+- .env.example
+  Make sure it contains every required variable with safe placeholder values only. No real Firebase, Supabase, Paystack, API, or admin secrets.
+
+- package.json
+  Confirm scripts are correct: pnpm lint, pnpm typecheck, pnpm test, pnpm build:web, pnpm functions:build, and pnpm check.
+
+- pnpm-lock.yaml
+  Keep this committed. It makes installs reproducible.
+
+- functions/package-lock.json
+  Keep this committed. It makes Firebase Functions installs reproducible.
+
+- firebase.json, .firebaserc, firestore.rules, firestore.indexes.json, storage.rules, database.rules.json
+  Review project IDs, rules, and deploy targets. Do not expose private service account keys.
+
+- src/lib/firebase.ts and lib/firebase.ts
+  Confirm they read public client config from environment variables or safe public Firebase web config. Do not hardcode private keys.
+
+- src/lib/paystack-service.ts, src/lib/use-paystack.ts, src/lib/support/gemini.ts, src/lib/sms/hubtel.ts, src/lib/supabase.ts
+  Check every integration file for hardcoded secrets, test keys, tokens, phone numbers, or private URLs.
+
+- app.json
+  Confirm app name, slug, version, icons, splash config, scheme, and production metadata are correct.
+
+- public/
+  Keep only production assets. Remove unused images or temporary uploads.
+
+- docs/
+  Keep useful documentation only. Remove outdated setup notes if they contradict README.md.
+
+- .github/workflows/ci.yml
+  Keep this file. It already runs install, lint, typecheck, unit tests, Functions build, Expo export, and Playwright tests.
+
+
+4. Commands to inspect and clean tracked files
+
+Run these from the repository root:
+
+git status --short
+
+Check which cleanup files are already tracked:
+
+git ls-files dist ce/dist .expo .codex .agents .kilo "*.log" "REPORTS.save*" ".env*" ".firebase-config.local"
+
+If any generated/local files are tracked, remove them from Git tracking:
+
+git rm -r --cached dist ce/dist .expo .codex .agents .kilo
+git rm --cached database-debug.log firestore-debug.log ce/firestore-debug.log REPORTS.save REPORTS.save.1 REPORTS.save.2
+
+If any real secret files are tracked, remove them from tracking immediately:
+
+git rm --cached .env .env.local .env.development.local .env.production.local functions/.env ce/.env.local .firebase-config.local
+
+Then delete local generated files you do not need:
+
+rm -rf node_modules functions/node_modules ce/node_modules dist ce/dist .expo .codex .agents .kilo
+rm -f database-debug.log firestore-debug.log ce/firestore-debug.log REPORTS.save REPORTS.save.1 REPORTS.save.2
+
+Do not run the rm commands until you are sure you no longer need those local generated files.
+
+
+5. Production checks before GitHub push
+
+Install dependencies:
+
+pnpm install
+npm --prefix functions ci
+
+Run formatting check:
+
+pnpm format:check
+
+Run the main project checks:
+
+pnpm lint
+pnpm typecheck
+pnpm test
+
+Build Firebase Functions:
+
+pnpm functions:build
+
+Build the web app:
+
+pnpm build:web
+
+Run end-to-end tests:
+
+pnpm test:e2e
+
+Or run the combined local check:
+
+pnpm check
+
+Note: pnpm check does not include pnpm build:web, pnpm functions:build, or pnpm test:e2e, so run those separately before a serious production push.
+
+
+6. Final GitHub push steps
+
+Create the repository on GitHub first. Do not initialize it with a README if this local repo already has one.
+
+Then run:
+
+git status --short
+git add .gitignore README.md .env.example package.json pnpm-lock.yaml functions/package.json functions/package-lock.json src app public docs firebase.json firestore.rules firestore.indexes.json storage.rules database.rules.json .github steps_to_github.txt
+git status --short
+
+Review what will be committed:
+
+git diff --cached --stat
+git diff --cached
+
+Commit:
+
+git commit -m "Prepare app for GitHub"
+
+Connect to GitHub. Replace USERNAME and REPOSITORY with your real GitHub account and repo name:
+
+git branch -M main
+git remote add origin https://github.com/USERNAME/REPOSITORY.git
+
+Push:
+
+git push -u origin main
+
+
+7. After pushing
+
+- Open the GitHub repository and check that no secrets or local files are visible.
+- Confirm the GitHub Actions CI workflow starts.
+- If CI fails, fix the issue locally, run the failing command locally, commit the fix, and push again.
+- Add repository secrets in GitHub Settings > Secrets and variables > Actions if deployment workflows need them.
+- Protect the main branch after the first clean push if this is a serious production repo.
+
+
+8. Important warning about secrets
+
+If any real secret has ever been committed, deleting it in a new commit is not enough because it remains in Git history. Rotate the exposed secret immediately, then clean the Git history with a tool such as git-filter-repo or BFG Repo-Cleaner before making the repository public.

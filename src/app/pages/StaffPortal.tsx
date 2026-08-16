@@ -47,7 +47,7 @@ const TechnicianPortal = lazy(() =>
   import('./TechnicianPortal').then(m => ({ default: m.TechnicianPortal }))
 );
 const ManagerPortal = lazy(() =>
-  import('./ManagerPortal').then(m => ({ default: m.ManagerPortal }))
+  import('./ManagerPortal').then(m => ({ default: m.default || m.ManagerPortal }))
 );
 
 type ResolvedRole =

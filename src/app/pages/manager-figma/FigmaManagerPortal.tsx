@@ -1,18 +1,53 @@
 import { useState, type ComponentType, type ReactNode } from 'react'
-import Sidebar from './components/Sidebar'
-import TopBar from './components/TopBar'
 import Dashboard from './pages/Dashboard'
 import Branches from './pages/Branches'
 import Settings from './pages/Settings'
 import { useFirebaseAuth } from '../../contexts/FirebaseAuthContext'
 import { useManagerCollection, displayValue, dateValue } from './manager-live-data'
+import { BarChart3, CheckCircle2, FileSpreadsheet, FolderOpen, LayoutDashboard, LogOut, PackageOpen, Settings2, Sparkles, GitBranch, Package, TrendingUp, Users, Table2 } from 'lucide-react'
+import cofkansLogo from './imports/cofkans-BFw8TZ-5.png'
+import { ThemeToggle } from '../../components/ThemeToggle'
+import './index.css'
+
+const PAGE_ICONS = {
+  inventory: PackageOpen,
+  sales: BarChart3,
+  employees: FolderOpen,
+  approvals: CheckCircle2,
+  reports: BarChart3,
+  spreadsheet: FileSpreadsheet,
+}
+
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'branches', label: 'Branches', icon: GitBranch },
+  { id: 'inventory', label: 'Inventory', icon: Package },
+  { id: 'sales', label: 'Sales', icon: TrendingUp },
+  { id: 'employees', label: 'Employees', icon: Users },
+  { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'spreadsheet', label: 'Spreadsheet', icon: Table2 },
+]
+
+function PageIntro({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return <div className="manager-page-intro">
+    <div>
+      <span className="manager-eyebrow">{eyebrow}</span>
+      <h1>{title}</h1>
+      <p>{description}</p>
+    </div>
+    <div className="manager-intro-mark" aria-hidden="true"><Sparkles size={18} /></div>
+  </div>
+}
 
 function LiveDataEmptyPage({ title }: { title: string }) {
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ minHeight: 240, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px dashed var(--border)', borderRadius: 12, color: 'var(--muted-foreground)', textAlign: 'center' }}>
-        <h1 style={{ margin: 0, color: 'var(--foreground)', fontSize: 18 }}>{title}</h1>
-        <p style={{ margin: 0, fontSize: 13 }}>No live records are available for this workspace yet.</p>
+    <div className="manager-page">
+      <PageIntro eyebrow="Workspace" title={title} description="Live workspace information will appear here when it is available in Firebase." />
+      <div className="manager-empty-hero">
+        <div className="manager-empty-icon"><Sparkles size={24} /></div>
+        <h2>Ready for live information</h2>
+        <p>No records are available for this workspace yet. The layout stays ready for your connected data.</p>
       </div>
     </div>
   )
@@ -20,17 +55,16 @@ function LiveDataEmptyPage({ title }: { title: string }) {
 
 function EmptyTablePage({ title, collectionName, columns, fields }: { title: string; collectionName: string; columns: string[]; fields: string[] }) {
   const { rows, loading, error } = useManagerCollection(collectionName)
+  const Icon = PAGE_ICONS[collectionName as keyof typeof PAGE_ICONS] || FolderOpen
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 16 }}>
-        <div><p style={{ margin: '0 0 4px', color: 'var(--muted-foreground)', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Workspace</p><h1 style={{ margin: 0, color: 'var(--foreground)', fontSize: 22 }}>{title}</h1></div>
-        <span style={{ color: 'var(--muted-foreground)', fontSize: 12 }}>No live records</span>
-      </div>
-      <div style={{ overflow: 'hidden', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--card)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead><tr>{columns.map(column => <th key={column} style={{ padding: '11px 14px', textAlign: 'left', color: 'var(--muted-foreground)', background: 'var(--muted)', borderBottom: '1px solid var(--border)', fontWeight: 700, whiteSpace: 'nowrap' }}>{column}</th>)}</tr></thead>
-          <tbody>{loading ? <tr><td colSpan={columns.length} style={{ height: 180, textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading {title.toLowerCase()} from Firebase…</td></tr> : error ? <tr><td colSpan={columns.length} style={{ height: 180, textAlign: 'center', color: 'var(--muted-foreground)' }}>{error}</td></tr> : rows.length === 0 ? <tr><td colSpan={columns.length} style={{ height: 180, textAlign: 'center', color: 'var(--muted-foreground)' }}>No {title.toLowerCase()} records in Firebase.</td></tr> : rows.map(row => <tr key={row.id} style={{ borderBottom: '1px solid var(--border)' }}>{fields.map(field => <td key={field} style={{ padding: '11px 14px', color: 'var(--foreground)' }}>{field.toLowerCase().includes('date') || field.toLowerCase().includes('at') ? dateValue(row[field]) : displayValue(row[field])}</td>)}</tr>)}</tbody>
-        </table>
+    <div className="manager-page">
+      <PageIntro eyebrow={`Firebase collection · ${collectionName}`} title={title} description="A live operational view connected directly to the Firebase collection." />
+      <div className="manager-table-card">
+        <div className="manager-table-heading"><div><span className="manager-table-kicker"><Icon size={14} /> Live collection</span><h2>{title} register</h2></div><span className="manager-record-count">{loading ? 'Syncing…' : `${rows.length} records`}</span></div>
+        <div className="manager-table-scroll"><table className="manager-table">
+          <thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
+          <tbody>{loading ? <tr><td colSpan={columns.length}><div className="manager-table-state"><span className="manager-spinner" />Loading live records from Firebase…</div></td></tr> : error ? <tr><td colSpan={columns.length}><div className="manager-table-state manager-table-error">{error}</div></td></tr> : rows.length === 0 ? <tr><td colSpan={columns.length}><div className="manager-table-state"><div className="manager-empty-icon small"><Icon size={18} /></div><strong>No {title.toLowerCase()} records yet</strong><span>New records from Firebase will appear in this structured workspace.</span></div></td></tr> : rows.map(row => <tr key={row.id}>{fields.map(field => <td key={field}>{field.toLowerCase().includes('date') || field.toLowerCase().includes('at') ? dateValue(row[field]) : <span className={field.toLowerCase().includes('status') ? 'manager-status' : ''}>{displayValue(row[field])}</span>}</td>)}</tr>)}</tbody>
+        </table></div>
       </div>
     </div>
   )
@@ -78,6 +112,7 @@ export function FigmaManagerPortal() {
 
   return (
     <div
+      className="manager-portal"
       style={{
         display: 'flex',
         height: '100vh',
@@ -86,14 +121,21 @@ export function FigmaManagerPortal() {
         background: 'var(--background)',
       }}
     >
-      <Sidebar active={page} onNav={setPage} />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-        <TopBar page={page} onSignOut={signOut} />
-        <main style={{ flex: 1, overflowY: 'auto', background: 'var(--background)' }}>
-          <PageWrapper pageKey={page}>
-            <PageComponent />
-          </PageWrapper>
-        </main>
+      <div className="manager-demo-shell">
+        <header className="manager-demo-header">
+          <div className="manager-demo-header-inner">
+            <div className="manager-demo-brand">
+              <div className="manager-demo-logo"><img src={typeof cofkansLogo === 'string' ? cofkansLogo : (cofkansLogo as { uri: string }).uri} alt="Cofkans Electricals" /></div>
+              <div><span>Manager Portal</span><strong>All branches · live access</strong></div>
+            </div>
+            <div className="manager-demo-actions"><ThemeToggle /><button className="manager-signout" type="button" onClick={() => void signOut()} title="Sign out"><LogOut size={15} /><span>Sign out</span></button></div>
+          </div>
+          <nav className="manager-demo-nav" aria-label="Manager portal sections">
+            {NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => setPage(id)} className={page === id ? 'active' : ''}><Icon size={14} />{label}</button>)}
+            <button type="button" onClick={() => setPage('settings')} className={page === 'settings' ? 'active' : ''}><Settings2 size={14} />Settings</button>
+          </nav>
+        </header>
+        <main className="manager-demo-content"><PageWrapper pageKey={page}><PageComponent /></PageWrapper></main>
       </div>
     </div>
   )
