@@ -44,12 +44,19 @@ export default function Employees() {
     return () => unsub()
   }, [user, hasRole])
 
-  const updateEmp = async (id: string, field: string, val: any) => {
+  // debounced saves per-employee-field to avoid excessive writes
+  const saveTimers = React.useRef<Record<string, number>>({})
+  const updateEmp = (id: string, field: string, val: any) => {
     setEmployees(prev => prev.map(e => e.id === id ? { ...e, [field]: field === 'score' || field === 'sales' ? Number(val) : val } : e))
     if (!canWrite) return
-    try {
-      await setDoc(doc(db, 'employees', id), { [field]: field === 'score' || field === 'sales' ? Number(val) : val }, { merge: true })
-    } catch (err) { console.error('save employee', err); setError('Failed to save employee') }
+    const key = `${id}:${field}`
+    if (saveTimers.current[key]) clearTimeout(saveTimers.current[key])
+    saveTimers.current[key] = window.setTimeout(async () => {
+      try {
+        await setDoc(doc(db, 'employees', id), { [field]: field === 'score' || field === 'sales' ? Number(val) : val }, { merge: true })
+      } catch (err) { console.error('save employee', err); setError('Failed to save employee') }
+      delete saveTimers.current[key]
+    }, 800)
   }
 
   const filtered = employees.filter(e =>
