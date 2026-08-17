@@ -1,8 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react'
 import logoSrc from '../imports/cofkans-BFw8TZ-5.png'
 
-interface Props { onLogin: () => void }
+interface Props {
+  onLogin?: () => void
+  onSubmit?: (email: string, password: string) => Promise<void>
+  resetPassword?: (email: string) => Promise<void>
+  externalError?: string | null
+}
 
 const CSS = `
   @keyframes lp-in {
@@ -100,7 +105,7 @@ const CSS = `
   .lp-eye:hover { color: #6B7280; }
 `
 
-export default function Login({ onLogin }: Props) {
+export default function Login({ onLogin, onSubmit, resetPassword, externalError }: Props) {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [showPwd, setShowPwd]   = useState(false)
@@ -109,6 +114,10 @@ export default function Login({ onLogin }: Props) {
   const [shaking, setShaking]   = useState(false)
   const [emailFocus, setEmailFocus] = useState(false)
   const [pwdFocus, setPwdFocus]     = useState(false)
+
+  useEffect(() => {
+    if (externalError) setError(externalError)
+  }, [externalError])
 
   const triggerError = (msg: string) => {
     setError(msg); setShaking(true)
@@ -122,9 +131,32 @@ export default function Login({ onLogin }: Props) {
     if (!password.trim())     { triggerError('Password is required.'); return }
     setError('')
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1600))
-    setLoading(false)
-    onLogin()
+    try {
+      if (onSubmit) {
+        await onSubmit(email.trim(), password)
+      } else {
+        await new Promise(r => setTimeout(r, 1600))
+        onLogin?.()
+      }
+    } catch (err) {
+      triggerError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleForgotPassword = async () => {
+    if (!resetPassword) return
+    if (!email.trim()) { triggerError('Enter your email address first.'); return }
+    setLoading(true)
+    try {
+      await resetPassword(email.trim())
+      triggerError('Password reset link sent. Check your email.')
+    } catch (err) {
+      triggerError(err instanceof Error ? err.message : 'Password reset failed.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -258,7 +290,7 @@ export default function Login({ onLogin }: Props) {
                   <label htmlFor="lp-pwd" style={{ fontSize: 12.5, fontWeight: 600, color: '#374151' }}>
                     Password
                   </label>
-                  <button type="button" className="lp-forgot">Forgot password?</button>
+                  <button type="button" className="lp-forgot" onClick={handleForgotPassword}>Forgot password?</button>
                 </div>
                 <div style={{ position: 'relative' }}>
                   <Lock size={15} style={{

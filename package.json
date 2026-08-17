@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "expo-router/entry",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
