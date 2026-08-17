@@ -1,145 +1,57 @@
-import { useState } from 'react'
-import { CheckCircle, XCircle, MessageCircle, Clock, AlertTriangle, FileText, Tag, RotateCcw, ArrowLeftRight, CreditCard, X, ChevronDown } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { CheckCircle, XCircle, MessageCircle, AlertTriangle, FileText, Tag, RotateCcw, ArrowLeftRight, CreditCard, Inbox, Search, Undo2 } from 'lucide-react'
+import { collection, query, orderBy, onSnapshot, doc, setDoc } from 'firebase/firestore'
+import { db } from '../lib/firebase'
+import { useFirebaseAuth as useAuth } from '../app/contexts/FirebaseAuthContext'
 
-const APPROVAL_ITEMS = [
-  {
-    id: 'PO-2024-0845', type: 'Purchase Order', requestedBy: 'John Mensah', branch: 'Head Office',
-    amount: 45200, date: '13 Aug 2024, 10:45 AM', priority: 'urgent',
-    description: 'Bulk purchase of LED panels and cable rolls for Q3 restocking',
-    icon: FileText, color: '#0EA5E9',
-  },
-  {
-    id: 'DISC-2024-0112', type: 'Discount Request', requestedBy: 'Ama Osei', branch: 'Asuoyeboa',
-    amount: 6800, date: '13 Aug 2024, 09:15 AM', priority: 'normal',
-    description: '15% discount for bulk order from Accra Constructions Ltd',
-    icon: Tag, color: '#A855F7',
-  },
-  {
-    id: 'RET-2024-0088', type: 'Return Request', requestedBy: 'Sarah Boateng', branch: 'Adum',
-    amount: 3200, date: '13 Aug 2024, 08:30 AM', priority: 'normal',
-    description: 'Faulty inverter return from SafePower GH · 2 units',
-    icon: RotateCcw, color: '#F59E0B',
-  },
-  {
-    id: 'TRF-2024-0231', type: 'Stock Transfer', requestedBy: 'Kofi Mensah', branch: 'Adum → Abuakwa',
-    amount: null, date: '12 Aug 2024, 04:00 PM', priority: 'urgent',
-    description: 'Transfer 50 units MCB 32A from Adum to replenish Abuakwa critical stock',
-    icon: ArrowLeftRight, color: '#10B981',
-  },
-  {
-    id: 'EXP-2024-0067', type: 'Expense Claim', requestedBy: 'Yaw Darko', branch: 'Takoradi',
-    amount: 1850, date: '12 Aug 2024, 02:20 PM', priority: 'normal',
-    description: 'Fuel and maintenance for delivery vehicle WR-3214-19',
-    icon: CreditCard, color: '#6B7280',
-  },
-  {
-    id: 'PO-2024-0844', type: 'Purchase Order', requestedBy: 'Efua Boateng', branch: 'Abuakwa',
-    amount: 12800, date: '11 Aug 2024, 11:00 AM', priority: 'normal',
-    description: 'Emergency restock of solar panels and extension boards',
-    icon: FileText, color: '#0EA5E9',
-  },
-]
+function EmptyState({ message }: { message: string }) { return (<div style={{ padding: '32px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}><Inbox size={20} style={{ color: '#CBD5E1' }} /><p style={{ fontSize: 12, color: '#9CA3AF', margin: 0, maxWidth: 260 }}>{message}</p></div>) }
 
-const SUMMARY = [
-  { label: 'Pending', value: 23, color: '#F59E0B', bg: '#FFFBEB' },
-  { label: 'Approved Today', value: 14, color: '#10B981', bg: '#F0FDF4' },
-  { label: 'Rejected Today', value: 3, color: '#EF4444', bg: '#FFF5F5' },
-  { label: 'High Priority', value: 8, color: '#EF4444', bg: '#FFF5F5' },
-]
-
-function ApprovalModal({ item, onClose, onDecision }: { item: typeof APPROVAL_ITEMS[0]; onClose: () => void; onDecision: (id: string, action: 'approve' | 'reject') => void }) {
+function ApprovalModal({ item, onClose, onDecision, startExpandedReject }: any) {
   const [note, setNote] = useState('')
   const [rejectReason, setRejectReason] = useState('')
-  const [showRejectField, setShowRejectField] = useState(false)
-  const Icon = item.icon
-
+  const [showRejectField, setShowRejectField] = useState(!!startExpandedReject)
+  useEffect(() => { const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [onClose])
+  if (!item) return null
+  const Icon = (item.icon || FileText)
+  const dirty = note.trim() !== '' || rejectReason.trim() !== ''
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)' }}>
-      <div className="w-full max-w-xl rounded-2xl overflow-hidden animate-fade-in" style={{ background: '#fff', border: '1px solid #E4E8EE', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#E5E7EB' }}>
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: item.color + '18' }}>
-              <Icon size={17} style={{ color: item.color }} />
-            </div>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)' }} onClick={() => { if (!dirty) onClose() }}>
+      <div style={{ width: '100%', maxWidth: 720, background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #E5E7EB' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <div style={{ width:36,height:36,borderRadius:10,background:(item.color||'#E5E7EB')+'18',display:'flex',alignItems:'center',justifyContent:'center' }}><Icon size={18} style={{ color: item.color||'#6B7280' }} /></div>
             <div>
-              <div className="font-bold" style={{ color: '#1F2937' }}>{item.type}</div>
-              <div className="text-xs" style={{ color: '#9CA3AF', fontFamily: 'JetBrains Mono, monospace' }}>{item.id}</div>
+              <div style={{ fontWeight: 700, color: '#1F2937' }}>{item.type}</div>
+              <div style={{ color: '#9CA3AF', fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>{item.id}</div>
             </div>
           </div>
-          <button onClick={onClose}><X size={20} style={{ color: '#6B7280' }} /></button>
+          <button onClick={onClose} aria-label="Close"><XCircle size={20} style={{ color: '#6B7280' }} /></button>
         </div>
 
-        <div className="p-6 space-y-4">
-          <div className="p-4 rounded-xl" style={{ background: '#F9FAFB' }}>
-            <p className="text-sm" style={{ color: '#374151' }}>{item.description}</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            {[
-              { label: 'Requested By', value: item.requestedBy },
-              { label: 'Branch', value: item.branch },
-              { label: 'Date', value: item.date },
-              { label: 'Amount', value: item.amount ? `GH₵ ${item.amount.toLocaleString()}` : 'N/A' },
-            ].map(({ label, value }) => (
-              <div key={label}>
-                <div className="text-xs mb-0.5" style={{ color: '#9CA3AF' }}>{label}</div>
-                <div className="font-medium" style={{ color: '#1F2937' }}>{value}</div>
+        <div style={{ padding: 20 }}>
+          <div style={{ background: '#F9FAFB', padding: 12, borderRadius: 12 }}><p style={{ margin:0, color:'#374151' }}>{item.description}</p></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+            {[['Requested By', item.requestedBy], ['Branch', item.branch], ['Date', item.date], ['Amount', item.amount!=null?`GH₵ ${item.amount.toLocaleString()}`:'N/A']].map(([label,value]) => (
+              <div key={String(label)}>
+                <div style={{ color: '#9CA3AF', fontSize: 12 }}>{label}</div>
+                <div style={{ fontWeight: 600, color: '#1F2937' }}>{value}</div>
               </div>
             ))}
           </div>
 
-          <div>
-            <label className="text-xs font-medium mb-1.5 block" style={{ color: '#6B7280' }}>Note (optional)</label>
-            <textarea
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none"
-              style={{ border: '1px solid #E5E7EB', color: '#1F2937' }}
-              rows={2}
-              placeholder="Add a note..."
-            />
+          <div style={{ marginTop: 12 }}>
+            <label style={{ color: '#6B7280', fontSize: 13 }}>Note (optional)</label>
+            <textarea value={note} onChange={e=>setNote(e.target.value)} rows={2} style={{ width:'100%', padding:8, borderRadius:10, border:'1px solid #E5E7EB', marginTop:6 }} placeholder="Add a note..." />
           </div>
 
-          {showRejectField && (
-            <div>
-              <label className="text-xs font-medium mb-1.5 block" style={{ color: '#EF4444' }}>Rejection Reason *</label>
-              <textarea
-                value={rejectReason}
-                onChange={e => setRejectReason(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none"
-                style={{ border: '1px solid #EF4444', color: '#1F2937' }}
-                rows={2}
-                placeholder="Explain why this is being rejected..."
-              />
-            </div>
-          )}
+          {showRejectField && <div style={{ marginTop: 12 }}>
+            <label style={{ color:'#EF4444', fontSize:13 }}>Rejection Reason *</label>
+            <textarea value={rejectReason} onChange={e=>setRejectReason(e.target.value)} rows={2} style={{ width:'100%', padding:8, borderRadius:10, border:'1px solid #EF4444', marginTop:6 }} placeholder="Explain why this is being rejected..." autoFocus={startExpandedReject} />
+          </div>}
 
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => onDecision(item.id, 'approve')}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm text-white"
-              style={{ background: '#10B981' }}
-            >
-              <CheckCircle size={16} /> Approve
-            </button>
-            {!showRejectField ? (
-              <button
-                onClick={() => setShowRejectField(true)}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm"
-                style={{ background: '#FFF5F5', color: '#EF4444', border: '1px solid #EF444430' }}
-              >
-                <XCircle size={16} /> Reject
-              </button>
-            ) : (
-              <button
-                onClick={() => onDecision(item.id, 'reject')}
-                disabled={!rejectReason}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm text-white"
-                style={{ background: rejectReason ? '#EF4444' : '#FCA5A5' }}
-              >
-                <XCircle size={16} /> Confirm Reject
-              </button>
-            )}
+          <div style={{ display:'flex', gap:12, marginTop: 12 }}>
+            <button onClick={()=>onDecision(item.id,'approve',note,'')} style={{ flex:1, background:'#10B981', color:'#fff', padding:12, borderRadius:10, fontWeight:700 }}><CheckCircle size={16} /> Approve</button>
+            {!showRejectField ? <button onClick={()=>setShowRejectField(true)} style={{ flex:1, background:'#FFF5F5', color:'#EF4444', padding:12, borderRadius:10, fontWeight:700 }}>Reject</button> : <button onClick={()=>onDecision(item.id,'reject',note,rejectReason)} disabled={!rejectReason.trim()} style={{ flex:1, background: rejectReason.trim() ? '#EF4444' : '#FCA5A5', color:'#fff', padding:12, borderRadius:10, fontWeight:700 }}><XCircle size={16} /> Confirm Reject</button>}
           </div>
         </div>
       </div>
@@ -147,162 +59,129 @@ function ApprovalModal({ item, onClose, onDecision }: { item: typeof APPROVAL_IT
   )
 }
 
-const GROUPS = ['Purchase Order', 'Discount Request', 'Return Request', 'Stock Transfer', 'Expense Claim']
-
 export default function Approvals() {
-  const [selected, setSelected] = useState<typeof APPROVAL_ITEMS[0] | null>(null)
-  const [decided, setDecided] = useState<Record<string, 'approve' | 'reject'>>({})
-  const [activeGroup, setActiveGroup] = useState('All')
+  const { user, hasRole, loading: authLoading } = useAuth()
+  const canRead = !!(hasRole && (hasRole('manager') || hasRole('developer')))
+  const canWrite = !!(hasRole && (hasRole('manager') || hasRole('developer')))
 
-  const handleDecision = (id: string, action: 'approve' | 'reject') => {
-    setDecided(prev => ({ ...prev, [id]: action }))
+  const [items, setItems] = useState<any[]>([])
+  const [selected, setSelected] = useState<any|null>(null)
+  const [openAsReject, setOpenAsReject] = useState(false)
+  const [decided, setDecided] = useState<Record<string, any>>({})
+  const [activeGroup, setActiveGroup] = useState('All')
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string|null>(null)
+
+  useEffect(() => {
+    if (!canRead) { setLoading(false); return }
+    setLoading(true)
+    const q = query(collection(db, 'approvals'), orderBy('date', 'desc'))
+    const unsub = onSnapshot(q, snap => { const arr:any[] = []; snap.forEach(d => arr.push({ id: d.id, ...(d.data() as any) })); setItems(arr); setLoading(false) }, err => { console.error(err); setError('Failed to load approvals'); setLoading(false) })
+    return () => unsub()
+  }, [user, hasRole])
+
+  const handleDecision = async (id: string, action: 'approve'|'reject', note: string, reason: string) => {
+    setDecided(prev => ({ ...prev, [id]: { action, note, reason, at: Date.now() } }))
     setSelected(null)
+    setOpenAsReject(false)
+    if (!canWrite) return
+    try { await setDoc(doc(db, 'approvals', id), { decision: { action, note, reason, by: user?.uid ?? null, at: Date.now() } }, { merge: true }) } catch (err) { console.error(err); setError('Failed to record decision') }
   }
 
-  const pending = APPROVAL_ITEMS.filter(i => !decided[i.id])
-  const visible = activeGroup === 'All' ? pending : pending.filter(i => i.type === activeGroup)
+  const undoDecision = async (id: string) => {
+    setDecided(prev => { const next = { ...prev }; delete next[id]; return next })
+    if (!canWrite) return
+    try { await setDoc(doc(db, 'approvals', id), { decision: null }, { merge: true }) } catch (err) { console.error(err); setError('Failed to undo decision') }
+  }
+
+  if (authLoading || loading) return <div style={{ padding: 24 }}>Loading approvals…</div>
+  if (!canRead) return <div style={{ padding: 24, color: '#DC2626' }}>Permission denied — approvals visible to managers & developers only.</div>
+  if (error) return <div style={{ padding: 24, color: '#DC2626' }}>{error}</div>
+
+  const pending = items.filter(i => !(i.decision))
+  const GROUPS = Array.from(new Set(items.map(i=>i.type))).slice(0,5)
+  const groupCounts: Record<string, number> = {}
+  GROUPS.forEach(g => groupCounts[g] = pending.filter(i=>i.type===g).length)
+
+  const q = search.trim().toLowerCase()
+  const groupFiltered = activeGroup === 'All' ? pending : pending.filter(i => i.type === activeGroup)
+  const searched = q ? groupFiltered.filter(i => [i.id, i.requestedBy, i.branch, i.description, i.type].some((v:any)=>String(v||'').toLowerCase().includes(q))) : groupFiltered
+  const visible = [...searched].sort((a,b)=>(a.priority==='urgent'?0:1)-(b.priority==='urgent'?0:1))
+
+  const decidedEntries = Object.entries(decided).sort(([,a],[,b])=>b.at-a.at)
 
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-      {selected && <ApprovalModal item={selected} onClose={() => setSelected(null)} onDecision={handleDecision} />}
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {selected && <ApprovalModal item={selected} startExpandedReject={openAsReject} onClose={()=>{setSelected(null);setOpenAsReject(false)}} onDecision={handleDecision} />}
 
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
         <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-bold" style={{ color: '#1F2937' }}>Approvals Queue</h2>
-            <span className="px-2.5 py-0.5 rounded-full text-sm font-bold text-white" style={{ background: '#EF4444' }}>{pending.length}</span>
-          </div>
-          <p className="text-sm mt-0.5" style={{ color: '#6B7280' }}>Pending actions requiring your review</p>
+          <h2 style={{ fontSize:20, fontWeight:700, margin:0, color:'#1F2937' }}>Approvals Queue</h2>
+          <p style={{ color:'#6B7280', margin:4 }}>{pending.length} pending</p>
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {SUMMARY.map(({ label, value, color, bg }) => (
-          <div key={label} className="rounded-2xl px-5 py-4" style={{ background: bg, border: `1px solid ${color}20` }}>
-            <div className="text-2xl font-bold" style={{ color }}>{value}</div>
-            <div className="text-xs mt-0.5" style={{ color }}>{label}</div>
-          </div>
-        ))}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12 }}>
+        <div style={{ background:'#FFFBEB', padding:12, borderRadius:12 }}>Pending: {pending.length}</div>
+        <div style={{ background:'#F0FDF4', padding:12, borderRadius:12 }}>Approved: {Object.values(decided).filter((d:any)=>d.action==='approve').length}</div>
+        <div style={{ background:'#FFF5F5', padding:12, borderRadius:12 }}>Rejected: {Object.values(decided).filter((d:any)=>d.action==='reject').length}</div>
       </div>
 
-      {/* Group filter */}
-      <div className="flex gap-2 flex-wrap">
-        {['All', ...GROUPS].map(g => (
-          <button key={g} onClick={() => setActiveGroup(g)}
-            className="px-3 py-1.5 rounded-xl text-xs font-medium transition-colors"
-            style={{ background: activeGroup === g ? '#1B5E3F' : '#fff', color: activeGroup === g ? '#fff' : '#6B7280', border: `1px solid ${activeGroup === g ? '#1B5E3F' : '#E5E7EB'}` }}>
-            {g}
-          </button>
-        ))}
+      <div style={{ display:'flex', gap:12, alignItems:'center' }}>
+        <div style={{ position:'relative', flex:1 }}>
+          <Search size={14} style={{ position:'absolute', left:12, top:'50%', transform:'translateY(-50%)', color:'#9CA3AF' }} />
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ID, requester, description…" style={{ width:'100%', padding:'9px 12px 9px 36px', border:'1px solid #E5E7EB', borderRadius:10 }} />
+        </div>
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={()=>setActiveGroup('All')} style={{ padding:'8px 12px', borderRadius:10 }}>{'All ('+pending.length+')'}</button>
+          {GROUPS.slice(0,4).map(g => <button key={g} onClick={()=>setActiveGroup(g)} style={{ padding:'8px 12px', borderRadius:10 }}>{g+' ('+(groupCounts[g]||0)+')'}</button>)}
+        </div>
       </div>
 
-      {/* Approval items */}
-      <div className="space-y-3">
-        {visible.length === 0 && (
-          <div className="text-center py-16 bg-white rounded-2xl" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-            <CheckCircle size={48} className="mx-auto mb-4" style={{ color: '#10B981', opacity: 0.4 }} />
-            <p className="font-semibold" style={{ color: '#1F2937' }}>All caught up!</p>
-            <p className="text-sm mt-1" style={{ color: '#6B7280' }}>No pending approvals in this category.</p>
-          </div>
-        )}
-        {visible.map(item => {
-          const Icon = item.icon
-          return (
-            <div key={item.id} className="bg-white rounded-2xl p-5 flex items-center gap-4 transition-all"
-              style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.1)', borderLeft: `4px solid ${item.priority === 'urgent' ? '#EF4444' : '#E5E7EB'}` }}
-              onMouseEnter={e => (e.currentTarget as HTMLElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'}
-              onMouseLeave={e => (e.currentTarget as HTMLElement).style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)'}
-            >
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: item.color + '18' }}>
-                <Icon size={18} style={{ color: item.color }} />
+      <div style={{ display:'grid', gap:12 }}>
+        {visible.length===0 ? <div style={{ background:'#fff', padding:24, borderRadius:12, textAlign:'center' }}><EmptyState message={q ? `Nothing matches "${search}"` : 'No pending approvals in this category.'} /></div> : visible.map(item=> (
+          <div key={item.id} style={{ background:'#fff', padding:16, borderRadius:12, display:'flex', gap:12, alignItems:'center', borderLeft:`4px solid ${item.priority==='urgent'? '#EF4444':'#E5E7EB'}` }}>
+            <div style={{ width:40,height:40,borderRadius:8,background:(item.color||'#E5E7EB')+'18',display:'flex',alignItems:'center',justifyContent:'center' }}><(item.icon||FileText) size={18} style={{ color:item.color||'#6B7280' }} /></div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:6 }}>
+                <div style={{ fontWeight:700, color:'#1F2937' }}>{item.type}</div>
+                <div style={{ background:'#F3F4F6', padding:'4px 8px', borderRadius:12, fontFamily:'JetBrains Mono, monospace', fontSize:12 }}>{item.id}</div>
+                {item.priority==='urgent' && <div style={{ background:'#FFF5F5', color:'#EF4444', padding:'4px 8px', borderRadius:12 }}>URGENT</div>}
               </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                  <span className="font-semibold text-sm" style={{ color: '#1F2937' }}>{item.type}</span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ fontFamily: 'JetBrains Mono, monospace', background: '#F3F4F6', color: '#6B7280' }}>{item.id}</span>
-                  {item.priority === 'urgent' && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1" style={{ background: '#FFF5F5', color: '#EF4444' }}>
-                      <AlertTriangle size={9} /> URGENT
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs mb-1 truncate" style={{ color: '#6B7280' }}>{item.description}</p>
-                <div className="flex items-center gap-3 text-xs" style={{ color: '#9CA3AF' }}>
-                  <span>{item.requestedBy}</span>
-                  <span>·</span>
-                  <span>{item.branch}</span>
-                  <span>·</span>
-                  <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>{item.date}</span>
-                </div>
-              </div>
-
-              {item.amount && (
-                <div className="text-base font-bold flex-shrink-0 hidden sm:block" style={{ color: '#1F2937', fontFamily: 'JetBrains Mono, monospace' }}>
-                  GH₵ {item.amount.toLocaleString()}
-                </div>
-              )}
-
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  onClick={() => handleDecision(item.id, 'approve')}
-                  className="p-2 rounded-xl transition-colors"
-                  style={{ background: '#F0FDF4', color: '#10B981' }}
-                  title="Approve"
-                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#DCFCE7'}
-                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = '#F0FDF4'}
-                >
-                  <CheckCircle size={18} />
-                </button>
-                <button
-                  onClick={() => setSelected(item)}
-                  className="p-2 rounded-xl transition-colors"
-                  style={{ background: '#F9FAFB', color: '#6B7280' }}
-                  title="Review"
-                >
-                  <MessageCircle size={18} />
-                </button>
-                <button
-                  onClick={() => handleDecision(item.id, 'reject')}
-                  className="p-2 rounded-xl transition-colors"
-                  style={{ background: '#FFF5F5', color: '#EF4444' }}
-                  title="Reject"
-                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#FEE2E2'}
-                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = '#FFF5F5'}
-                >
-                  <XCircle size={18} />
-                </button>
-              </div>
+              <div style={{ color:'#6B7280', marginBottom:6, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.description}</div>
+              <div style={{ color:'#9CA3AF', fontSize:13 }}>{item.requestedBy} · {item.branch} · <span style={{ fontFamily:'JetBrains Mono, monospace' }}>{item.date}</span></div>
             </div>
-          )
-        })}
+            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+              <button onClick={()=> item.priority==='urgent' ? setSelected(item) : handleDecision(item.id,'approve','','')} style={{ background:'#F0FDF4', color:'#10B981', padding:8, borderRadius:10 }} title="Approve"><CheckCircle size={18} /></button>
+              <button onClick={()=>setSelected(item)} style={{ background:'#F9FAFB', color:'#6B7280', padding:8, borderRadius:10 }} title="Review"><MessageCircle size={18} /></button>
+              <button onClick={()=>{ setSelected(item); setOpenAsReject(true) }} style={{ background:'#FFF5F5', color:'#EF4444', padding:8, borderRadius:10 }} title="Reject"><XCircle size={18} /></button>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* History */}
-      {Object.keys(decided).length > 0 && (
-        <div className="bg-white rounded-2xl p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-          <h3 className="font-bold text-base mb-4" style={{ color: '#1F2937' }}>Recent Decisions</h3>
-          <div className="space-y-2">
-            {Object.entries(decided).map(([id, action]) => {
-              const item = APPROVAL_ITEMS.find(i => i.id === id)!
-              return (
-                <div key={id} className="flex items-center justify-between px-4 py-3 rounded-xl" style={{ background: '#F9FAFB' }}>
-                  <div className="flex items-center gap-3">
-                    <span className={`w-2 h-2 rounded-full`} style={{ background: action === 'approve' ? '#10B981' : '#EF4444' }} />
-                    <span className="text-sm font-medium" style={{ color: '#1F2937' }}>{item?.type}</span>
-                    <span className="text-xs" style={{ color: '#9CA3AF', fontFamily: 'JetBrains Mono, monospace' }}>{id}</span>
-                  </div>
-                  <span className="text-xs font-semibold capitalize px-2 py-1 rounded-full"
-                    style={{ background: action === 'approve' ? '#F0FDF4' : '#FFF5F5', color: action === 'approve' ? '#10B981' : '#EF4444' }}>
-                    {action === 'approve' ? '✓ Approved' : '✗ Rejected'}
-                  </span>
+      {decidedEntries.length>0 && <div style={{ background:'#fff', padding:16, borderRadius:12 }}>
+        <h3 style={{ margin:0, fontWeight:700 }}>Recent Decisions</h3>
+        <div style={{ marginTop:12, display:'grid', gap:8 }}>
+          {decidedEntries.map(([id,decision]) => {
+            const item = items.find(i=>i.id===id) || { type: id }
+            return (
+              <div key={id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:12, borderRadius:10, background:'#F9FAFB' }}>
+                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                  <div style={{ width:8,height:8,borderRadius:4,background: decision.action==='approve'?'#10B981':'#EF4444' }} />
+                  <div style={{ fontWeight:600 }}>{item.type}</div>
+                  {decision.reason && <div style={{ color:'#9CA3AF' }}>— {decision.reason}</div>}
                 </div>
-              )
-            })}
-          </div>
+                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                  <div style={{ padding:'4px 8px', borderRadius:12, background: decision.action==='approve'?'#F0FDF4':'#FFF5F5', color: decision.action==='approve'?'#10B981':'#EF4444' }}>{decision.action==='approve'?'✓ Approved':'✗ Rejected'}</div>
+                  <button onClick={()=>undoDecision(id)} style={{ background:'transparent', border:'none', color:'#6B7280' }}><Undo2 size={12} /> Undo</button>
+                </div>
+              </div>
+            )
+          })}
         </div>
-      )}
+      </div>}
     </div>
   )
 }
