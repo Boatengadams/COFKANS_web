@@ -28,10 +28,22 @@ export default function Sales() {
     return () => unsub()
   }, [user, hasRole])
 
-  const updateOrder = async (id: string, field: string, val: any) => {
+  // debounced saves per-order-field to avoid excessive writes
+  const saveTimers = React.useRef<Record<string, number>>({})
+  const updateOrder = (id: string, field: string, val: any) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, [field]: field === 'amount' ? Number(String(val).replace(/[^0-9.]/g, '')) : val } : o))
     if (!canWrite) return
-    try { await setDoc(doc(db, 'orders', id), { [field]: field === 'amount' ? Number(String(val).replace(/[^0-9.]/g, '')) : val }, { merge: true }) } catch (err) { console.error(err); setError('Failed to save order') }
+    const key = `${id}:${field}`
+    if (saveTimers.current[key]) clearTimeout(saveTimers.current[key])
+    saveTimers.current[key] = window.setTimeout(async () => {
+      try {
+        await setDoc(doc(db, 'orders', id), { [field]: field === 'amount' ? Number(String(val).replace(/[^0-9.]/g, '')) : val }, { merge: true })
+      } catch (err) {
+        console.error(err)
+        setError('Failed to save order')
+      }
+      delete saveTimers.current[key]
+    }, 800)
   }
 
   const revenueData = Array.from({ length: 30 }, (_, i) => ({ day: `${i + 1}`, lighting: 0, tools: 0, smartHome: 0, cables: 0 }))
