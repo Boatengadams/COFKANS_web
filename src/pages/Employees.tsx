@@ -1,223 +1,190 @@
-import { useState } from 'react'
-import { Users, UserCheck, Umbrella, UserPlus, Search, Plus, Star, ArrowUpRight, ArrowDownRight } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import React, { useState, useEffect } from 'react'
+import { Users, UserCheck, Umbrella, UserPlus, Search, Plus, Star, Inbox } from 'lucide-react'
+import { collection, query, orderBy, onSnapshot, doc, setDoc } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import EditableCell from '../components/EditableCell'
+import { useFirebaseAuth as useAuth } from '../app/contexts/FirebaseAuthContext'
 
-const DEPT_PERF = [
-  { dept: 'Management', score: 4.6 },
-  { dept: 'Front Desk', score: 4.1 },
-  { dept: 'Warehouse', score: 4.3 },
-  { dept: 'Logistics', score: 3.8 },
-  { dept: 'Technicians', score: 4.0 },
-]
+const COLOR = {
+  brand: '#4F3FF0', brandDim: 'rgba(79,63,240,0.10)', ink: '#111827', body: '#374151', muted: '#6B7280', faint: '#9CA3AF', border: '#E4E8EE', line: '#F3F4F6', wash: '#F9FAFB', slate200: '#E2E8F0', slate300: '#CBD5E1', up: '#16A34A', upBg: '#F0FDF4', upBorder: 'rgba(22,163,74,0.25)', warn: '#D97706', warnBg: '#FFFBEB',
+}
+const FONT_MONO = `'IBM Plex Mono', 'SFMono-Regular', monospace`
 
-const DEPT_COLORS = ['#16A34A', '#2563EB', '#7C3AED', '#D97706', '#0891B2']
-
-const INIT_EMPLOYEES = [
-  { id: 'EMP-001', name: 'Kwame Asante', role: 'General Manager', dept: 'Management', branch: 'Head Office', status: 'active', joined: '15 Jan 2020', score: 4.9, sales: 385200 },
-  { id: 'EMP-002', name: 'Ama Osei', role: 'Branch Manager', dept: 'Management', branch: 'Asuoyeboa', status: 'active', joined: '03 Mar 2021', score: 4.7, sales: 98500 },
-  { id: 'EMP-003', name: 'John Mensah', role: 'Senior Cashier', dept: 'Front Desk', branch: 'Head Office', status: 'active', joined: '08 Jun 2022', score: 4.2, sales: 48200 },
-  { id: 'EMP-004', name: 'Sarah Boateng', role: 'Warehouse Lead', dept: 'Warehouse', branch: 'Adum', status: 'active', joined: '01 Feb 2021', score: 4.5, sales: 29100 },
-  { id: 'EMP-005', name: 'Yaw Darko', role: 'Branch Manager', dept: 'Management', branch: 'Takoradi', status: 'on-leave', joined: '19 Sep 2020', score: 4.1, sales: 54300 },
-  { id: 'EMP-006', name: 'Efua Boateng', role: 'Branch Manager', dept: 'Management', branch: 'Abuakwa', status: 'active', joined: '05 Nov 2022', score: 3.8, sales: 0 },
-  { id: 'EMP-007', name: 'Kofi Mensah', role: 'Driver', dept: 'Logistics', branch: 'Adum', status: 'active', joined: '22 Apr 2023', score: 4.0, sales: 0 },
-  { id: 'EMP-008', name: 'Maria Owusu', role: 'Cashier', dept: 'Front Desk', branch: 'Head Office', status: 'active', joined: '10 Jan 2024', score: 3.9, sales: 21400 },
-]
-
-const STATUS_S: Record<string, { bg: string; color: string; label: string }> = {
-  'active': { bg: '#F0FDF4', color: '#15803D', label: 'Active' },
-  'on-leave': { bg: '#FFFBEB', color: '#B45309', label: 'On Leave' },
-  'inactive': { bg: '#F3F4F6', color: '#6B7280', label: 'Inactive' },
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div style={{ padding: '32px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}>
+      <Inbox size={20} style={{ color: COLOR.slate300 }} />
+      <p style={{ fontSize: 12, color: COLOR.faint, margin: 0, maxWidth: 260, lineHeight: 1.5 }}>{message}</p>
+    </div>
+  )
 }
 
 const RANK_MEDALS = ['🥇', '🥈', '🥉']
 
-const Card = ({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) => (
-  <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #E4E8EE', boxShadow: '0 1px 2px rgba(0,0,0,0.04)', ...style }}>{children}</div>
-)
-
 export default function Employees() {
-  const [search, setSearch] = useState('')
-  const [employees, setEmployees] = useState(INIT_EMPLOYEES)
+  const { user, hasRole, loading: authLoading } = useAuth()
+  const canRead = !!(hasRole && (hasRole('manager') || hasRole('developer')))
+  const canWrite = !!(hasRole && (hasRole('manager') || hasRole('developer')))
 
-  const updateEmp = (id: string, field: string, val: string) => {
+  const [search, setSearch] = useState('')
+  const [employees, setEmployees] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!canRead) { setLoading(false); return }
+    setLoading(true)
+    const q = query(collection(db, 'employees'), orderBy('name'))
+    const unsub = onSnapshot(q, snap => {
+      const arr: any[] = []
+      snap.forEach(d => arr.push({ id: d.id, ...(d.data() as any) }))
+      setEmployees(arr)
+      setLoading(false)
+    }, err => { console.error(err); setError('Failed to load employees'); setLoading(false) })
+    return () => unsub()
+  }, [user, hasRole])
+
+  const updateEmp = async (id: string, field: string, val: any) => {
     setEmployees(prev => prev.map(e => e.id === id ? { ...e, [field]: field === 'score' || field === 'sales' ? Number(val) : val } : e))
+    if (!canWrite) return
+    try {
+      await setDoc(doc(db, 'employees', id), { [field]: field === 'score' || field === 'sales' ? Number(val) : val }, { merge: true })
+    } catch (err) { console.error('save employee', err); setError('Failed to save employee') }
   }
 
-  const sorted = [...employees].sort((a, b) => b.sales - a.sales)
   const filtered = employees.filter(e =>
-    e.name.toLowerCase().includes(search.toLowerCase()) ||
-    e.id.toLowerCase().includes(search.toLowerCase()) ||
-    e.role.toLowerCase().includes(search.toLowerCase())
+    e.name?.toLowerCase().includes(search.toLowerCase()) ||
+    e.id?.toLowerCase().includes(search.toLowerCase()) ||
+    e.role?.toLowerCase().includes(search.toLowerCase())
   )
+
+  const activeCount = employees.filter(e => e.status === 'active').length
+  const onLeaveCount = employees.filter(e => e.status === 'on-leave').length
+
+  const SUMMARY = [
+    { icon: Users, label: 'Total Staff', value: employees.length, color: COLOR.brand },
+    { icon: UserCheck, label: 'Active', value: activeCount, color: COLOR.up },
+    { icon: Umbrella, label: 'On Leave', value: onLeaveCount, color: COLOR.warn },
+    { icon: UserPlus, label: 'New This Month', value: 0, color: COLOR.up },
+  ]
+
+  const sorted = [...employees].sort((a, b) => (b.sales || 0) - (a.sales || 0))
+  const leaderboard = sorted.filter(e => (e.sales || 0) > 0).slice(0, 4)
+  const maxSales = leaderboard[0]?.sales || 1
+
+  if (authLoading || loading) return <div style={{ padding: 24 }}>Loading employees…</div>
+  if (!canRead) return <div style={{ padding: 24, color: '#DC2626' }}>Permission denied — employees visible to managers & developers only.</div>
+  if (error) return <div style={{ padding: 24, color: '#DC2626' }}>{error}</div>
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <style>{`.row-hover{transition:background .12s}.row-hover:hover{background:${COLOR.wash}}`}</style>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>Employee Management</h1>
-          <p style={{ fontSize: 13, color: '#6B7280', margin: '4px 0 0' }}>Staff leaderboard & directory · {employees.length} total</p>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: COLOR.ink, margin: 0 }}>Employee Management</h1>
+          <p style={{ fontSize: 13, color: COLOR.muted, margin: '4px 0 0' }}>Staff leaderboard & directory · {employees.length} total</p>
         </div>
-        <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8, border: '1px solid #E4E8EE', background: '#fff', fontSize: 13, fontWeight: 500, color: '#374151', cursor: 'pointer' }}>
+        <button disabled={!canWrite} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8, border: `1px solid ${COLOR.border}`, background: '#fff', fontSize: 13, fontWeight: 500, color: COLOR.body, cursor: canWrite ? 'pointer' : 'not-allowed' }}>
           <Plus size={13} /> Add Employee
         </button>
       </div>
 
-      {/* Summary */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-        {[
-          { icon: Users, label: 'Total Staff', value: 67, color: '#16A34A' },
-          { icon: UserCheck, label: 'Active', value: 61, color: '#2563EB' },
-          { icon: Umbrella, label: 'On Leave', value: 4, color: '#D97706' },
-          { icon: UserPlus, label: 'New This Month', value: 3, color: '#7C3AED' },
-        ].map(({ icon: Icon, label, value, color }) => (
-          <div key={label} style={{ background: '#fff', borderRadius: 12, padding: '16px 18px', border: '1px solid #E4E8EE', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+        {SUMMARY.map(({ icon: Icon, label, value, color }) => (
+          <div key={label} style={{ background: '#fff', borderRadius: 12, padding: '16px 18px', border: `1px solid ${COLOR.border}` }}>
             <div style={{ width: 32, height: 32, borderRadius: 8, background: color + '12', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
               <Icon size={15} style={{ color }} />
             </div>
-            <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 22, fontWeight: 700, color }}>{value}</div>
-            <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3 }}>{label}</div>
+            <div style={{ fontFamily: FONT_MONO, fontSize: 22, fontWeight: 700, color: COLOR.ink }}>{value}</div>
+            <div style={{ fontSize: 11, color: COLOR.faint, marginTop: 3 }}>{label}</div>
           </div>
         ))}
       </div>
 
-      {/* Sales Leaderboard */}
-      <Card style={{ padding: 20 }}>
+      <div style={{ background: '#fff', borderRadius: 12, padding: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>Staff Sales Leaderboard</div>
-            <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>Ranked by total sales contribution this month</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: COLOR.ink }}>Staff Sales Leaderboard</div>
+            <div style={{ fontSize: 11, color: COLOR.faint, marginTop: 2 }}>Ranked by total sales contribution this month</div>
           </div>
-          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 20, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0' }}>THIS MONTH</span>
+          <span style={{ fontFamily: FONT_MONO, fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 20, background: COLOR.upBg, color: COLOR.up, border: `1px solid ${COLOR.upBorder}` }}>THIS MONTH</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
-          {sorted.filter(e => e.sales > 0).slice(0, 4).map((e, i) => {
-            const pct = Math.round((e.sales / sorted[0].sales) * 100)
-            const barColor = i === 0 ? '#D97706' : i === 1 ? '#6B7280' : i === 2 ? '#92400E' : '#2563EB'
-            return (
-              <div key={e.id} style={{ padding: '14px 16px', borderRadius: 10, background: i === 0 ? '#FFFBEB' : '#F9FAFB', border: `1px solid ${i === 0 ? '#FDE68A' : '#F3F4F6'}` }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 13, fontWeight: 700, color: i === 0 ? '#111827' : '#9CA3AF' }}>#{i + 1}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <Star size={11} fill="#D97706" style={{ color: '#D97706' }} />
-                    <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, fontWeight: 700, color: '#D97706' }}>{e.score}</span>
+        {leaderboard.length === 0 ? <EmptyState message="No sales recorded yet. Top performers will show up here once orders start coming in." /> : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            {leaderboard.map((e, i) => {
+              const pct = Math.round(((e.sales || 0) / maxSales) * 100)
+              return (
+                <div key={e.id} style={{ padding: '14px 16px', borderRadius: 10, background: i === 0 ? COLOR.warnBg : COLOR.wash, border: `1px solid ${i === 0 ? '#FDE68A' : COLOR.line}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <span style={{ fontFamily: FONT_MONO, fontSize: 13, fontWeight: 700 }}>{RANK_MEDALS[i] ? RANK_MEDALS[i] : `#${i+1}`}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <Star size={11} fill={COLOR.warn} style={{ color: COLOR.warn }} />
+                      <span style={{ fontFamily: FONT_MONO, fontSize: 11, fontWeight: 700, color: COLOR.warn }}>{e.score}</span>
+                    </div>
                   </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: '50%', background: '#E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#374151', flexShrink: 0 }}>
-                    {e.name.split(' ').map(n => n[0]).join('')}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: '50%', background: COLOR.slate200, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: COLOR.body }}>{(e.name || '').split(' ').map((n:any)=>n[0]).join('').slice(0,2)}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: COLOR.ink }}>{e.name}</div>
+                      <div style={{ fontSize: 10, color: COLOR.faint }}>{e.role}</div>
+                    </div>
                   </div>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{e.name}</div>
-                    <div style={{ fontSize: 10, color: '#9CA3AF' }}>{e.role}</div>
-                  </div>
+                  <div style={{ fontFamily: FONT_MONO, fontSize: 17, fontWeight: 700, color: COLOR.ink, marginBottom: 6 }}>GH₵ {( (e.sales||0) / 1000).toFixed(0)}K</div>
+                  <div style={{ height: 3, borderRadius: 2, background: COLOR.slate200 }}><div style={{ width: `${pct}%`, height: '100%', borderRadius: 2, background: COLOR.brand }} /></div>
                 </div>
-                <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 17, fontWeight: 700, color: '#111827', marginBottom: 6 }}>GH₵ {(e.sales / 1000).toFixed(0)}K</div>
-                <div style={{ height: 3, borderRadius: 2, background: '#E5E7EB' }}>
-                  <div style={{ width: `${pct}%`, height: '100%', borderRadius: 2, background: barColor }} />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </Card>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
-      {/* Staff table */}
-      <Card style={{ padding: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+      <div style={{ background: '#fff', borderRadius: 12, padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>Staff Directory</div>
-            <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 1 }}>Click any cell to edit inline</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: COLOR.ink }}>Staff Directory</div>
+            <div style={{ fontSize: 11, color: COLOR.faint, marginTop: 1 }}>Click any cell to edit inline</div>
           </div>
-          <div style={{ position: 'relative' }}>
-            <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 7, paddingBottom: 7, borderRadius: 8, border: '1px solid #E4E8EE', background: '#F9FAFB', fontSize: 13, color: '#111827', outline: 'none', width: 200, fontFamily: 'Inter, sans-serif' }}
-              placeholder="Search staff..."
-              onFocus={e => (e.target.style.borderColor = '#16A34A')}
-              onBlur={e => (e.target.style.borderColor = '#E4E8EE')}
-            />
+          <div>
+            <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: COLOR.faint, pointerEvents: 'none' }} />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search staff..." style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 7, paddingBottom: 7, borderRadius: 8, border: `1px solid ${COLOR.border}`, background: COLOR.wash, fontSize: 13, color: COLOR.ink, width: 200 }} />
           </div>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '2px solid #F3F4F6' }}>
+              <tr style={{ borderBottom: `2px solid ${COLOR.line}` }}>
                 {['Employee', 'Role', 'Branch', 'Status', 'Score', 'Sales', 'Joined', ''].map(h => (
-                  <th key={h} style={{ textAlign: 'left', paddingBottom: 8, paddingRight: 14, fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#9CA3AF', letterSpacing: '0.07em', fontWeight: 600, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+                  <th key={h} style={{ textAlign: 'left', paddingBottom: 8, paddingRight: 14, fontFamily: FONT_MONO, fontSize: 9, color: COLOR.faint }}>{h.toUpperCase()}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map(emp => {
-                const s = STATUS_S[emp.status]
-                return (
-                  <tr key={emp.id} style={{ borderBottom: '1px solid #F9FAFB' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <td style={{ padding: '10px 14px 10px 0' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                          {emp.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                        </div>
-                        <div>
-                          <EditableCell value={emp.name} onChange={val => updateEmp(emp.id, 'name', val)} style={{ fontSize: 13, fontWeight: 600, color: '#111827' }} />
-                          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#9CA3AF' }}>{emp.id}</div>
-                        </div>
+              {filtered.length === 0 ? (
+                <tr><td colSpan={8}><EmptyState message={employees.length === 0 ? 'No employees added yet.' : 'No staff match your search.'} /></td></tr>
+              ) : filtered.map(emp => (
+                <tr key={emp.id} className="row-hover" style={{ borderBottom: `1px solid ${COLOR.wash}` }}>
+                  <td style={{ padding: '10px 14px 10px 0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: '50%', background: COLOR.slate200, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: COLOR.body }}>{(emp.name||'').split(' ').map((n:any)=>n[0]).join('').slice(0,2)}</div>
+                      <div>
+                        <EditableCell value={emp.name} onChange={val => updateEmp(emp.id, 'name', val)} style={{ fontSize: 13, fontWeight: 600, color: COLOR.ink }} />
+                        <div style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.faint }}>{emp.id}</div>
                       </div>
-                    </td>
-                    <td style={{ paddingRight: 14 }}>
-                      <EditableCell value={emp.role} onChange={val => updateEmp(emp.id, 'role', val)} style={{ fontSize: 12, color: '#374151' }} />
-                    </td>
-                    <td style={{ paddingRight: 14 }}>
-                      <EditableCell value={emp.branch} onChange={val => updateEmp(emp.id, 'branch', val)} style={{ fontSize: 12, color: '#6B7280' }} />
-                    </td>
-                    <td style={{ paddingRight: 14 }}>
-                      <span style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, fontFamily: 'JetBrains Mono, monospace', ...s }}>
-                        {s.label}
-                      </span>
-                    </td>
-                    <td style={{ paddingRight: 14 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <Star size={11} fill="#D97706" style={{ color: '#D97706' }} />
-                        <EditableCell value={emp.score} onChange={val => updateEmp(emp.id, 'score', val)} style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 700, color: '#111827' }} />
-                      </div>
-                    </td>
-                    <td style={{ paddingRight: 14 }}>
-                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 700, color: emp.sales > 0 ? '#16A34A' : '#9CA3AF' }}>
-                        {emp.sales > 0 ? `GH₵ ${(emp.sales / 1000).toFixed(0)}K` : '—'}
-                      </span>
-                    </td>
-                    <td style={{ paddingRight: 14 }}>
-                      <EditableCell value={emp.joined} onChange={val => updateEmp(emp.id, 'joined', val)} style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: '#9CA3AF' }} />
-                    </td>
-                    <td>
-                      <button style={{ fontSize: 12, fontWeight: 500, color: '#2563EB', background: 'none', border: 'none', cursor: 'pointer' }}>View →</button>
-                    </td>
-                  </tr>
-                )
-              })}
+                    </div>
+                  </td>
+                  <td style={{ paddingRight: 14 }}><EditableCell value={emp.role} onChange={val => updateEmp(emp.id, 'role', val)} style={{ fontSize: 12, color: COLOR.body }} /></td>
+                  <td style={{ paddingRight: 14 }}><EditableCell value={emp.branch} onChange={val => updateEmp(emp.id, 'branch', val)} style={{ fontSize: 12, color: COLOR.muted }} /></td>
+                  <td style={{ paddingRight: 14 }}><span style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, fontFamily: FONT_MONO, background: emp.status==='active'?COLOR.upBg:emp.status==='on-leave'?COLOR.warnBg:COLOR.line, color: emp.status==='active'?COLOR.up:emp.status==='on-leave'?COLOR.warn:COLOR.muted }}>{emp.status}</span></td>
+                  <td style={{ paddingRight: 14 }}><div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Star size={11} fill={COLOR.warn} style={{ color: COLOR.warn }} /><EditableCell value={emp.score} onChange={val => updateEmp(emp.id, 'score', val)} style={{ fontFamily: FONT_MONO, fontSize: 12, fontWeight: 700, color: COLOR.ink }} /></div></td>
+                  <td style={{ paddingRight: 14 }}><span style={{ fontFamily: FONT_MONO, fontSize: 12, fontWeight: 700, color: emp.sales>0?COLOR.up:COLOR.faint }}>{emp.sales>0?`GH₵ ${(emp.sales/1000).toFixed(0)}K`:'—'}</span></td>
+                  <td style={{ paddingRight: 14 }}><EditableCell value={emp.joined} onChange={val => updateEmp(emp.id, 'joined', val)} style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLOR.faint }} /></td>
+                  <td><button style={{ fontSize: 12, fontWeight: 500, color: COLOR.brand, background: 'none', border: 'none', cursor: 'pointer' }}>View →</button></td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-      </Card>
-
-      {/* Dept chart */}
-      <Card style={{ padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: '#111827', marginBottom: 16 }}>Department Performance</div>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={DEPT_PERF} layout="vertical" margin={{ left: 12, right: 32 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" horizontal={false} />
-            <XAxis type="number" domain={[0, 5]} tick={{ fontFamily: 'JetBrains Mono', fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
-            <YAxis type="category" dataKey="dept" tick={{ fontFamily: 'Inter', fontSize: 12, fill: '#374151' }} tickLine={false} axisLine={false} width={90} />
-            <Tooltip formatter={(v: any) => [`${v}/5`, 'Avg Score']} contentStyle={{ fontFamily: 'JetBrains Mono', fontSize: 11, background: '#1F2937', border: 'none', borderRadius: 8, color: '#fff' }} />
-            <Bar dataKey="score" radius={[0, 6, 6, 0]}>
-              {DEPT_PERF.map((_, i) => <Cell key={i} fill={DEPT_COLORS[i]} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
+      </div>
     </div>
   )
 }
