@@ -27,10 +27,17 @@ export default function Inventory() {
     return () => unsub()
   }, [user, hasRole])
 
-  const updateRow = async (sku: string, field: string, val: any) => {
+  // debounced saves per-inventory-field to reduce Firestore writes
+  const saveTimers = React.useRef<Record<string, number>>({})
+  const updateRow = (sku: string, field: string, val: any) => {
     setLowStock(prev => prev.map(r => r.sku === sku ? { ...r, [field]: field === 'current' || field === 'minimum' ? Number(val) : val } : r))
     if (!canWrite) return
-    try { await setDoc(doc(db, 'inventory', sku), { [field]: field === 'current' || field === 'minimum' ? Number(val) : val }, { merge: true }) } catch (err) { console.error(err); setError('Failed to save inventory') }
+    const key = `${sku}:${field}`
+    if (saveTimers.current[key]) clearTimeout(saveTimers.current[key])
+    saveTimers.current[key] = window.setTimeout(async () => {
+      try { await setDoc(doc(db, 'inventory', sku), { [field]: field === 'current' || field === 'minimum' ? Number(val) : val }, { merge: true }) } catch (err) { console.error(err); setError('Failed to save inventory') }
+      delete saveTimers.current[key]
+    }, 800)
   }
 
   if (authLoading || loading) return <div style={{ padding: 24 }}>Loading inventory…</div>
