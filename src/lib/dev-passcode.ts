@@ -12,8 +12,7 @@
  * replacement for backend enforcement.
  */
 
-const env = (process.env as any) || {};
-const DEV_PASSCODE = (env.VITE_DEV_PASSCODE as string | undefined) ?? '';
+const DEV_PASSCODE = import.meta.env.VITE_DEV_PASSCODE ?? '';
 
 export function isDevPasscodeConfigured(): boolean {
   return DEV_PASSCODE.length >= 4;

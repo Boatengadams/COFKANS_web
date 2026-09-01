@@ -29,15 +29,33 @@ const missingFirebaseConfig = Object.entries(requiredFirebaseConfig)
   .filter(([, value]) => !value)
   .map(([key]) => key);
 
+// Do not throw while this module is being imported. A missing preview/deploy
+// environment used to abort the entire module graph before React mounted,
+// which appeared to users as a completely white screen. Keep Firebase
+// initialisable with clearly-invalid placeholders so the UI can render and
+// authentication requests fail normally until the environment is configured.
 if (!DEMO_MODE && missingFirebaseConfig.length > 0) {
-  throw new Error(
-    `Missing Firebase configuration for ${APP_ENV} mode: ${missingFirebaseConfig.join(', ')}. ` +
+  console.error(
+    `[firebase] Missing configuration for ${APP_ENV} mode: ${missingFirebaseConfig.join(', ')}. ` +
       'Set the matching EXPO_PUBLIC_FIREBASE_* values before starting or exporting the app.',
   );
 }
 
+const safeFirebaseConfig = {
+  apiKey: firebaseConfigValue(requiredFirebaseConfig.apiKey, 'missing-api-key'),
+  authDomain: firebaseConfigValue(requiredFirebaseConfig.authDomain, 'missing-auth-domain.invalid'),
+  projectId: firebaseConfigValue(requiredFirebaseConfig.projectId, 'missing-project'),
+  storageBucket: firebaseConfigValue(requiredFirebaseConfig.storageBucket, 'missing-project.appspot.com'),
+  messagingSenderId: firebaseConfigValue(requiredFirebaseConfig.messagingSenderId, '000000000000'),
+  appId: firebaseConfigValue(requiredFirebaseConfig.appId, 'missing-app-id'),
+};
+
+function firebaseConfigValue(value: string, fallback: string): string {
+  return value || fallback;
+}
+
 const firebaseConfig = {
-  ...requiredFirebaseConfig,
+  ...safeFirebaseConfig,
   measurementId: getPublicEnv('FIREBASE_MEASUREMENT_ID') || undefined,
 };
 

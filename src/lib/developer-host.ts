@@ -22,7 +22,7 @@ import { store, type StaffMember } from '../app/pages/developer-portal/store';
 
 /** Subdomain label that identifies the console host. Override with VITE_DEVELOPER_SUBDOMAIN. */
 const SUBDOMAIN =
-  (process.env as any)?.VITE_DEVELOPER_SUBDOMAIN?.trim?.() || 'developer';
+  import.meta.env.VITE_DEVELOPER_SUBDOMAIN?.trim?.() || 'developer';
 
 /** Extra accepted labels so `dev.` works too. */
 const CONSOLE_LABELS = new Set([SUBDOMAIN, 'dev', 'developer', 'console']);
@@ -45,7 +45,7 @@ function hostname(): string {
  */
 export function isDeveloperHost(): boolean {
   // Build-time force (e.g. a dedicated console deploy target).
-  if ((process.env as any)?.VITE_FORCE_DEVELOPER_CONSOLE === 'true') return true;
+  if (import.meta.env.VITE_FORCE_DEVELOPER_CONSOLE === 'true') return true;
 
   // Query-string override for local testing: ?console=developer / ?console=off
   try {

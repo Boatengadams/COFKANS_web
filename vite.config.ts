@@ -9,9 +9,14 @@ import siteConfiguration from './.figma/make/site.json'
 export default defineConfig(({ mode }) => {
   // .figma/make/deploy-preview passes `--mode development` for cached-preview builds.
   const emitSourcemaps = mode === 'development'
+  const serverPort = parseInt(process.env.PORT || '8443')
+  const isFigmaPreview = Boolean(process.env.FIGMA_PUBLIC_URL)
 
   return {
     base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : '/',
+    // The app shares Expo's EXPO_PUBLIC_* environment names across native
+    // and web builds. Vite must explicitly expose that prefix to the client.
+    envPrefix: ['VITE_', 'EXPO_PUBLIC_'],
     build: {
       sourcemap: emitSourcemaps ? 'inline' : false,
       minify: !emitSourcemaps,
@@ -27,18 +32,22 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+        'react-native': 'react-native-web',
+        'expo-router': path.resolve(__dirname, './src/web-expo-router.tsx'),
       },
       dedupe: ['react', 'react-dom'],
     },
     server: {
       host: '0.0.0.0',
-      port: parseInt(process.env.PORT || '8443'),
+      port: serverPort,
       strictPort: true,
       watch: { ignored: ['**/.figma/**'] },
-      hmr: {
-        clientPort: 443,
-        protocol: 'wss',
-      },
+      // Figma's hosted iframe needs its HTTPS socket. Local development must
+      // use the actual Vite port and plain ws, otherwise the browser tries
+      // wss://localhost/ on port 443 and reports a failed HMR connection.
+      hmr: isFigmaPreview
+        ? { clientPort: 443, protocol: 'wss' }
+        : { host: 'localhost', clientPort: serverPort, protocol: 'ws' },
     },
     preview: {
       host: '0.0.0.0',
