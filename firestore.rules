@@ -47,12 +47,11 @@ service cloud.firestore {
     // ===== OWASP A01: BROKEN ACCESS CONTROL PROTECTION =====
 
     function isDeveloper() {
-      // Layered: custom claim is the primary signal (set by setDeveloperClaim CF);
-      // userDoc.isDeveloper + bootstrap email are legacy fallbacks during cutover.
+      // Custom claim is primary (set by setDeveloperClaim CF);
+      // userDoc.isDeveloper is a legacy fallback during cutover.
       return isSignedIn() &&
              (request.auth.token.developer == true ||
-              getUserData().isDeveloper == true ||
-              request.auth.token.email == 'boatengadams4g@gmail.com');
+              getUserData().isDeveloper == true);
     }
 
     function hasDeveloperClaim() {
@@ -78,7 +77,9 @@ service cloud.firestore {
     }
 
     function canHaveRole(email, role) {
-      return true;
+      return role == 'customer' ||
+             (role in ['admin', 'technician', 'driver', 'manager'] &&
+              isCompanyEmail(email));
     }
 
     // ===== OWASP A03: INJECTION PROTECTION =====
@@ -192,50 +193,106 @@ service cloud.firestore {
                        ||
                        (isDeveloper() && canModifyUserRole() && canHaveRole(request.resource.data.email, request.resource.data.role));
 
-      // Manager and Developer (and legacy Admin) can delete users.
+      // General manager, developer, and legacy admin can delete users.
       allow delete: if canManageUsers();
     }
 
-    // Reads a staff account row (returns null if not staff).
+    // ===== STAFF / ROLE HELPERS =====
+
     function staffData() {
       return get(/databases/$(database)/documents/staffAccounts/$(request.auth.uid)).data;
     }
+
     function staffExists() {
       return isSignedIn() && exists(/databases/$(database)/documents/staffAccounts/$(request.auth.uid));
     }
-    function isBranchStaff(slug) {
-      return staffExists() && staffData().role == 'branch_manager'
-             && staffData().branchSlug == slug && staffData().active == true;
+
+    // Null-safe branch slug for the signed-in staff row.
+    function staffBranch() {
+      return staffExists() && staffData().branchSlug;
     }
+
+    // Company-wide general manager only (not branch_manager / management_support).
+    function isGeneralManager() {
+      return hasRole('manager')
+             || (staffExists()
+                 && staffData().role == 'manager'
+                 && staffData().active == true)
+             || (isSignedIn()
+                 && request.auth.token.staff == true
+                 && request.auth.token.role == 'manager');
+    }
+
+    // Compatibility alias — never includes branch_manager.
+    function isManager() {
+      return isGeneralManager();
+    }
+
+    function isBranchManager() {
+      return staffExists()
+             && staffData().role == 'branch_manager'
+             && staffData().active == true;
+    }
+
+    function isBranchManagerOf(slug) {
+      return isBranchManager() && staffData().branchSlug == slug;
+    }
+
+    // Alias for compatibility with existing order / branchSettings rules.
+    function isBranchStaff(slug) {
+      return isBranchManagerOf(slug);
+    }
+
     function isBranchRider(slug) {
       return staffExists() && staffData().role == 'rider'
              && staffData().branchSlug == slug && staffData().active == true;
     }
+
+    function isManagementSupport() {
+      return staffExists()
+             && staffData().role == 'management_support'
+             && staffData().active == true;
+    }
+
+    // Roles allowed into the staff portal surface.
+    function staffPortalRoles() {
+      return ['developer', 'manager', 'branch_manager', 'management_support',
+              'front_desk', 'branch_desk', 'rider', 'driver', 'technician',
+              'warehouse', 'accountant', 'hr', 'procurement', 'marketing',
+              'admin', 'support_agent'];
+    }
+
     function isFrontDesk() {
-      return staffExists() && staffData().role == 'front_desk' && staffData().active == true;
+      return staffExists()
+             && staffData().active == true
+             && staffData().role in staffPortalRoles()
+             && staffData().role == 'front_desk';
     }
-    // Manager — the overall boss. Matches either a custom claim or an active
-    // staff row in a manager-class role.
-    function isManager() {
-      return hasRole('manager')
-             || (staffExists()
-                 && staffData().role in ['manager', 'branch_manager', 'management_support']
-                 && staffData().active == true);
+
+    function isActiveStaff() {
+      return staffExists()
+             && staffData().active == true
+             && staffData().role in staffPortalRoles();
     }
-    // Product permission matrix (mirrors ProductManager on the client):
-    //   Add / update price / edit details → Manager, Front Desk, Developer, Admin
+
+    function isStaffPortalUser() {
+      return isActiveStaff();
+    }
+
+    // Product permission matrix:
+    //   Add / update price / edit details → General manager, Developer, Admin
     //   Remove (delete)                   → Developer only
     function canManageProducts() {
-      return isManager() || isFrontDesk() || isDeveloper() || isAdmin();
+      return isGeneralManager() || isDeveloper() || isAdmin();
     }
+
     function canRemoveProducts() {
       return isDeveloper();
     }
-    // User administration matrix (mirrors StaffManagementPanel on the client):
-    // creating and deleting staff/user accounts is available to the Manager
-    // (the overall boss) and the Developer equally, plus legacy Admin.
+
+    // User administration: general manager, developer, legacy admin.
     function canManageUsers() {
-      return isManager() || isDeveloper() || isAdmin();
+      return isGeneralManager() || isDeveloper() || isAdmin();
     }
 
     // ===== STAFF ACCOUNTS COLLECTION =====
@@ -244,14 +301,13 @@ service cloud.firestore {
     // riders, front-desk, developers). A row keyed by the Firebase UID is
     // what gates every /branch/:slug, /rider, /frontdesk and developer
     // portal. Customers never appear here.
+    // Mutations are Admin SDK / Cloud Functions only.
     match /staffAccounts/{uid} {
-      // A staff member can read their own row to confirm their role.
-      // Developers can read any row (to manage accounts in the dev console).
-      allow read: if isSignedIn() && (request.auth.uid == uid || canManageUsers());
-
-      // Manager and Developer can provision, update, or revoke staff accounts
-      // (equal power). There is no public-facing signup for staff anywhere.
-      allow create, update, delete: if canManageUsers();
+      allow read: if isSignedIn() &&
+                     (request.auth.uid == uid ||
+                      canManageUsers() ||
+                      isStaffPortalUser());
+      allow create, update, delete: if false;
     }
 
     // ===== DEVELOPER PORTAL — MFA SECRETS =====
@@ -293,7 +349,7 @@ service cloud.firestore {
       // Public read access for browsing
       allow read: if true;
 
-      // OWASP A01 & A08: Admins and Developers can create/update/delete products
+      // OWASP A01 & A08: General managers, developers, and admins can manage products
       // Validate price and stock data
       // Allow price >= 0 for products (0 means "Contact for Pricing")
       allow create: if canManageProducts() &&
@@ -319,7 +375,7 @@ service cloud.firestore {
       // Public read so storefront can apply live prices
       allow read: if true;
 
-      // Manager / Front Desk / Developer / Admin can set/update; price must be valid
+      // General manager / Developer / Admin can set/update; price must be valid
       allow create, update: if canManageProducts() && isValidPrice(request.resource.data.price);
       // Only a Developer may remove an override.
       allow delete: if canRemoveProducts();
@@ -375,11 +431,12 @@ service cloud.firestore {
     match /orders/{orderId} {
       // OWASP A01: Users can read their own orders
       // Admins, technicians, and assigned drivers can read orders.
+      // Company-wide general managers can read all orders.
       // Branch staff can read every order routed to their branch.
       // Branch riders can read orders at their branch (so they see the queue).
       allow read: if isOwner(resource.data.userId) ||
                      isAdmin() ||
-                     isManager() ||
+                     isGeneralManager() ||
                      isTechnician() ||
                      (isDriver() && request.auth.uid == resource.data.driverId) ||
                      (resource.data.branchSlug != null &&
@@ -425,15 +482,186 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Manager workspace collections. Managers can read operational records;
-    // writes remain owned by their dedicated server workflows.
-    match /branches/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
-    match /inventory/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
-    match /stockTransfers/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
-    match /stockRequests/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
-    match /approvals/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
-    match /reports/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
-    match /spreadsheet/{id} { allow read: if isManager() || isDeveloper(); allow write: if isDeveloper(); }
+    // ===== OPS COLLECTIONS (manager workspace + branch-scoped reads) =====
+    // Branch directory data is intentionally public: the customer storefront
+    // and checkout must be able to list every active location before sign-in.
+    // Keep all mutations developer-only; do not place private operational data
+    // in this collection.
+    match /branches/{id} {
+      allow read: if true;
+      allow write: if isDeveloper();
+    }
+
+    match /inventory/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isActiveStaff() &&
+            (resource.data.branchSlug == staffData().branchSlug ||
+             resource.data.branchId == staffData().branchSlug));
+      allow write: if false; // CF only
+    }
+
+    match /stockTransfers/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isActiveStaff() && (
+             resource.data.fromBranchId == staffData().branchSlug
+             || resource.data.toBranchId == staffData().branchSlug
+             || resource.data.fromBranchSlug == staffData().branchSlug
+             || resource.data.toBranchSlug == staffData().branchSlug));
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    match /stockRequests/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isActiveStaff() &&
+            (resource.data.branchId == staffData().branchSlug ||
+             resource.data.branchSlug == staffData().branchSlug));
+      allow write: if false;
+    }
+
+    match /approvals/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isActiveStaff() &&
+            (resource.data.branchId == staffData().branchSlug ||
+             resource.data.branchId == 'all'));
+      allow create: if isStaffPortalUser() &&
+                       (isGeneralManager() || isDeveloper() ||
+                        request.resource.data.branchId == staffData().branchSlug);
+      allow update: if isGeneralManager() || isDeveloper()
+        || (isBranchManager() && resource.data.branchId == staffData().branchSlug
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'reviewedBy', 'reviewedByName', 'reviewedAt', 'updatedAt']));
+      allow delete: if isDeveloper();
+    }
+
+    match /reports/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport();
+      allow write: if false;
+    }
+
+    match /spreadsheet/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isStaffPortalUser() &&
+            (id == request.auth.uid || resource.data.ownerUid == request.auth.uid));
+      allow create, update: if isGeneralManager() || isDeveloper()
+        || (isStaffPortalUser() && id == request.auth.uid);
+      allow delete: if isDeveloper() || isGeneralManager();
+    }
+
+    // ===== STAFF PORTAL CRM / COLLABORATION =====
+
+    match /crmLeads/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+      allow create: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper() ||
+        request.resource.data.branchId == staffData().branchSlug);
+      allow update: if isGeneralManager() || isDeveloper()
+        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+      allow delete: if isGeneralManager() || isDeveloper();
+    }
+
+    match /crmQuotes/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+      allow create: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper() ||
+        request.resource.data.branchId == staffData().branchSlug);
+      allow update: if isGeneralManager() || isDeveloper()
+        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+      allow delete: if isGeneralManager() || isDeveloper();
+    }
+
+    match /crmCustomers/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+      allow create: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper() ||
+        request.resource.data.branchId == staffData().branchSlug);
+      allow update: if isGeneralManager() || isDeveloper()
+        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+      allow delete: if isGeneralManager() || isDeveloper();
+    }
+
+    match /crmRepXP/{id} {
+      allow read: if isStaffPortalUser() &&
+                     (id == request.auth.uid || isGeneralManager() || isDeveloper());
+      allow create, update: if isStaffPortalUser() && id == request.auth.uid;
+      allow delete: if isDeveloper();
+    }
+
+    match /crm/{docId} {
+      allow read: if isStaffPortalUser();
+      allow write: if isGeneralManager() || isDeveloper();
+    }
+
+    match /staffDocuments/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isStaffPortalUser() &&
+            (resource.data.branchId == staffData().branchSlug ||
+             resource.data.createdBy == request.auth.uid));
+      allow create: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper() ||
+        request.resource.data.branchId == staffData().branchSlug ||
+        request.resource.data.createdBy == request.auth.uid);
+      allow update: if isGeneralManager() || isDeveloper()
+        || (isStaffPortalUser() && resource.data.createdBy == request.auth.uid);
+      allow delete: if isGeneralManager() || isDeveloper()
+        || (isStaffPortalUser() && resource.data.createdBy == request.auth.uid);
+    }
+
+    match /staffMessages/{id} {
+      allow read: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper() ||
+        resource.data.branchId == staffData().branchSlug ||
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid);
+      allow create: if isStaffPortalUser() &&
+                       request.resource.data.fromUid == request.auth.uid;
+      allow update: if isStaffPortalUser() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid);
+      allow delete: if isGeneralManager() || isDeveloper();
+    }
+
+    match /staffMeetings/{id} {
+      allow read: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper() ||
+        resource.data.branchId == staffData().branchSlug ||
+        resource.data.createdBy == request.auth.uid);
+      allow create: if isStaffPortalUser();
+      allow update: if isGeneralManager() || isDeveloper()
+        || (isStaffPortalUser() && resource.data.createdBy == request.auth.uid);
+      allow delete: if isGeneralManager() || isDeveloper();
+    }
+
+    match /staffSettings/{id} {
+      allow read: if isStaffPortalUser();
+      allow write: if isGeneralManager() || isDeveloper();
+    }
+
+    match /localSales/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+      allow create: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper() ||
+        request.resource.data.branchId == staffData().branchSlug);
+      allow update, delete: if isGeneralManager() || isDeveloper();
+    }
+
+    match /conversations/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (isStaffPortalUser() &&
+            (resource.data.branchId == staffData().branchSlug ||
+             resource.data.branchSlug == staffData().branchSlug));
+      allow create, update: if isStaffPortalUser() && (
+        isGeneralManager() || isDeveloper()
+        || request.resource.data.branchId == staffData().branchSlug
+        || request.resource.data.branchSlug == staffData().branchSlug
+        || resource.data.branchId == staffData().branchSlug);
+      allow delete: if isGeneralManager() || isDeveloper();
+    }
 
     // ===== REVIEWS COLLECTION - ENHANCED SECURITY =====
 
@@ -566,13 +794,14 @@ service cloud.firestore {
     }
 
     // ===== FAILED LOGIN TRACKING =====
+    // Cloud Functions / Admin SDK only — clients must not read or write.
     match /loginAttempts/{trackerId} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
 
     // ===== AUDIT LOGS COLLECTION =====
     // Reads gated by the strict custom claim — legacy isDeveloper() fallbacks
-    // (email/userDoc) must not see audit history. Writes only via Cloud
+    // (userDoc) must not see audit history. Writes only via Cloud
     // Function (auditLog callable) which uses Admin SDK and bypasses rules.
     match /auditLogs/{logId} {
       allow read: if hasDeveloperClaim();
