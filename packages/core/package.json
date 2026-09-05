@@ -1,0 +1,12 @@
+{
+  "name": "@cofkans/core",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./collections": "./src/collections.ts",
+    "./environment": "./src/environment.ts",
+    "./lib/*": "./src/lib/*"
+  }
+}
