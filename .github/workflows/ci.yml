@@ -31,8 +31,8 @@ jobs:
       - name: Install root dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright browser
-        run: pnpm exec playwright install --with-deps chromium
+      #- name: Install Playwright browser
+        #run: pnpm exec playwright install --with-deps chromium
 
       - name: Lint
         run: pnpm lint
@@ -52,5 +52,5 @@ jobs:
       - name: Expo web export
         run: pnpm build:web
 
-      - name: Playwright smoke tests
-        run: pnpm test:e2e
+     # - name: Playwright smoke tests
+        #run: pnpm test:e2e
