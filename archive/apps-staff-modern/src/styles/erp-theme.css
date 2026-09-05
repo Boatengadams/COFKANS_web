@@ -1,0 +1,270 @@
+/**
+ * COFKANS ELECTRICALS — ERP enterprise theme (scoped).
+ *
+ * A premium "Deep Forest Green" enterprise design language applied ONLY to the
+ * staff/ERP surface. Everything is scoped under `.erp-theme`, so overriding the
+ * shared design tokens here recolours the entire staff suite (which is fully
+ * token-driven, including the gold vars the pro UI kit references) without
+ * touching the gold customer storefront.
+ *
+ * Comparable in spirit to SAP / NetSuite / Linear / Stripe dashboards, but its
+ * own thing: forest-green primary, emerald + mint secondaries, and a calm,
+ * data-dense light-gray canvas with soft-shadow white cards.
+ */
+
+.erp-theme {
+  /* ---- Brand palette (violet enterprise) -------------------------------- */
+  --erp-forest: #4C1D95;       /* deep violet — primary brand (name kept) */
+  --erp-forest-700: #5B21B6;
+  --erp-forest-600: #7C3AED;
+  --erp-emerald: #8B5CF6;      /* secondary / positive (name kept) */
+  --erp-mint: #C4B5FD;
+  --erp-blue: #2563EB;         /* accent — electric blue */
+  --erp-amber: #F59E0B;        /* accent — warning */
+  --erp-red: #EF4444;          /* accent — danger */
+  --erp-purple: #A855F7;       /* accent — info / AI */
+
+  /* ---- Core token overrides (consumed via @theme inline mapping) -------- */
+  --background: #F6F5FB;               /* very light violet-gray canvas */
+  --background-secondary: #F0EEF9;
+  --foreground: #1E1B4B;
+  --card: #FFFFFF;
+  --card-foreground: #1E1B4B;
+  --popover: #FFFFFF;
+  --popover-foreground: #1E1B4B;
+
+  --primary: var(--erp-forest-700);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--erp-emerald);
+  --secondary-foreground: #FFFFFF;
+  --accent: var(--erp-emerald);
+  --accent-foreground: #FFFFFF;
+
+  --muted: #F0EEF9;
+  --muted-foreground: #6A6485;
+
+  --destructive: var(--erp-red);
+  --destructive-foreground: #FFFFFF;
+
+  --border: rgba(76, 29, 149, 0.10);
+  --border-light: rgba(76, 29, 149, 0.05);
+  --input: transparent;
+  --input-background: rgba(76, 29, 149, 0.03);
+  --switch-background: #DCD7EC;
+  --ring: var(--erp-emerald);
+
+  /* Slightly tighter enterprise radius */
+  --radius: 1.25rem;
+
+  /* ---- Premium elevation + glass system ("level 99") ------------------- */
+  /* Soft, multi-layer shadows in the brand's forest tint — the quiet depth
+   * you see in Apple / Tesla / Linear surfaces. */
+  --erp-shadow-sm: 0 1px 2px rgba(76, 29, 149, 0.04), 0 1px 3px rgba(76, 29, 149, 0.06);
+  --erp-shadow: 0 1px 2px rgba(76, 29, 149, 0.04), 0 10px 28px -10px rgba(76, 29, 149, 0.14);
+  --erp-shadow-lg: 0 2px 6px rgba(76, 29, 149, 0.05), 0 28px 56px -16px rgba(76, 29, 149, 0.20);
+  --erp-shadow-glow: 0 0 0 1px rgba(139, 92, 246, 0.16), 0 16px 40px -12px rgba(139, 92, 246, 0.28);
+  --erp-hairline: rgba(76, 29, 149, 0.09);
+  --erp-glass-bg: rgba(255, 255, 255, 0.72);
+  --erp-glass-border: rgba(255, 255, 255, 0.7);
+  --erp-tint: rgba(139, 92, 246, 0.06);
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ---- Re-point the pro-kit "gold" vars to green ----------------------- */
+  --true-gold: var(--erp-emerald);
+  --antique-gold: var(--erp-forest-600);
+  --gradient-gold: linear-gradient(135deg, #5B21B6 0%, #8B5CF6 100%);
+  --gradient-gold-subtle: linear-gradient(135deg, rgba(139, 92, 246, 0.12) 0%, rgba(91, 33, 182, 0.05) 100%);
+
+  /* ---- Sidebar --------------------------------------------------------- */
+  --sidebar: #2E1065;
+  --sidebar-foreground: #EDE9FE;
+  --sidebar-primary: var(--erp-emerald);
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: var(--erp-mint);
+  --sidebar-accent-foreground: #2E1065;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: var(--erp-emerald);
+
+  color: var(--foreground);
+  background-color: var(--background);
+}
+
+/* Dark mode within the ERP surface. */
+.dark .erp-theme {
+  --background: #0B0D10;
+  --background-secondary: #101419;
+  --foreground: #F3F4F6;
+  --card: #12161B;
+  --card-foreground: #F3F4F6;
+  --popover: #171B21;
+  --popover-foreground: #F3F4F6;
+  --primary: var(--erp-emerald);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--erp-mint);
+  --secondary-foreground: #111827;
+  --accent: var(--erp-emerald);
+  --accent-foreground: #FFFFFF;
+  --muted: #171B21;
+  --muted-foreground: rgba(243, 244, 246, 0.64);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-light: rgba(255, 255, 255, 0.05);
+  --input-background: rgba(255, 255, 255, 0.04);
+  --switch-background: #2B323B;
+  --ring: var(--erp-emerald);
+  --true-gold: var(--erp-emerald);
+  --antique-gold: var(--erp-mint);
+  --gradient-gold: linear-gradient(135deg, #8B5CF6 0%, #C4B5FD 100%);
+  --gradient-gold-subtle: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(196, 181, 253, 0.08) 100%);
+  --sidebar: #080A0D;
+
+  /* Deeper, ambient shadows for the dark ERP surface. */
+  --erp-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --erp-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+  --erp-shadow-lg: 0 4px 10px rgba(0, 0, 0, 0.45), 0 32px 60px -18px rgba(0, 0, 0, 0.7);
+  --erp-shadow-glow: 0 0 0 1px rgba(139, 92, 246, 0.22), 0 18px 44px -12px rgba(139, 92, 246, 0.32);
+  --erp-hairline: rgba(255, 255, 255, 0.08);
+  --erp-glass-bg: rgba(18, 22, 27, 0.78);
+  --erp-glass-border: rgba(255, 255, 255, 0.08);
+  --erp-tint: rgba(139, 92, 246, 0.08);
+}
+
+/* ---- Enterprise accent utilities (scoped) ------------------------------ */
+/* The global `section { content-visibility: auto }` rule (theme.css) skips
+ * layout for off-screen sections, which makes Recharts' ResponsiveContainer
+ * measure 0×0 and warn. ERP panels render as <section>, so opt them back in. */
+.erp-theme section {
+  content-visibility: visible;
+  contain-intrinsic-size: auto;
+}
+
+.erp-theme .erp-accent-blue { color: var(--erp-blue); }
+.erp-theme .erp-accent-amber { color: var(--erp-amber); }
+.erp-theme .erp-accent-purple { color: var(--erp-purple); }
+
+/* Animated shimmer skeleton for loading states. */
+.erp-theme .erp-skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--muted) 70%, transparent) 25%,
+    color-mix(in srgb, var(--muted-foreground) 12%, var(--muted)) 37%,
+    color-mix(in srgb, var(--muted) 70%, transparent) 63%
+  );
+  background-size: 400% 100%;
+  animation: erp-shimmer 1.4s ease infinite;
+  border-radius: 0.75rem;
+}
+
+@keyframes erp-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ---- Premium surface utilities ("level 99") ---------------------------- */
+
+/* Frosted glass surface — used for the nav shell, top bar and elevated cards. */
+.erp-theme .erp-glass {
+  background: var(--erp-glass-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid var(--erp-glass-border);
+}
+
+/* The signature elevated card: hairline ring, soft depth, buttery hover lift. */
+.erp-theme .erp-card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--erp-hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--erp-shadow);
+  transition:
+    transform 0.4s var(--ease-out-soft),
+    box-shadow 0.4s var(--ease-out-soft),
+    border-color 0.4s var(--ease-out-soft);
+  will-change: transform;
+}
+.erp-theme .erp-card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--erp-shadow-lg);
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--erp-hairline));
+}
+
+/* Elevation helpers. */
+.erp-theme .erp-elevate { box-shadow: var(--erp-shadow); }
+.erp-theme .erp-elevate-lg { box-shadow: var(--erp-shadow-lg); }
+.erp-theme .erp-glow { box-shadow: var(--erp-shadow-glow); }
+.erp-theme .erp-hairline { border-color: var(--erp-hairline) !important; }
+
+/* Green gradient text for headline numbers + titles. */
+.erp-theme .erp-gradient-text {
+  background: linear-gradient(120deg, var(--erp-forest-700), var(--erp-emerald));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dark .erp-theme .erp-gradient-text {
+  background: linear-gradient(120deg, var(--erp-emerald), var(--erp-mint));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Ambient radial glow layer — drop inside a `position:relative` container. */
+.erp-theme .erp-ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 120% at 100% 0%, var(--erp-tint), transparent 60%),
+    radial-gradient(50% 100% at 0% 100%, rgba(37, 99, 235, 0.05), transparent 60%);
+}
+
+/* Faint dotted grid for hero headers — pure CSS, no assets. */
+.erp-theme .erp-grid-bg {
+  background-image: radial-gradient(circle at 1px 1px, var(--erp-hairline) 1px, transparent 0);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 85%);
+  mask-image: linear-gradient(180deg, #000, transparent 85%);
+}
+
+/* Animated conic sheen for premium brand marks / CTAs. */
+.erp-theme .erp-sheen {
+  position: relative;
+  overflow: hidden;
+}
+.erp-theme .erp-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.28) 48%, transparent 62%);
+  transform: translateX(-120%);
+  transition: transform 0.8s var(--ease-out-soft);
+}
+.erp-theme .erp-sheen:hover::after { transform: translateX(120%); }
+
+/* Slow float for ambient accents. */
+@keyframes erp-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.erp-theme .erp-float { animation: erp-float 6s ease-in-out infinite; }
+
+/* Refined thin scrollbar within the ERP surface. */
+.erp-theme *::-webkit-scrollbar { width: 9px; height: 9px; }
+.erp-theme *::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-foreground) 28%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.erp-theme *::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--primary) 45%, transparent);
+  background-clip: padding-box;
+}
+.erp-theme *::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .erp-theme .erp-card,
+  .erp-theme .erp-sheen::after,
+  .erp-theme .erp-float { transition: none; animation: none; }
+}
