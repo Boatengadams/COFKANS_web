@@ -1,8 +1,12 @@
 node_modules/
+.expo/
 dist/
+**/dist/
 build/
 .cache/
 .env*
+.firebase-config.local
+*.firebase-config.local
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo
