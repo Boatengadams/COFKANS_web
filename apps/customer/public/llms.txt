@@ -1,0 +1,9 @@
+# Cofkans Electricals
+
+Cofkans Electricals provides lighting and electrical products for homes and businesses in Ghana.
+
+The customer portal supports product browsing, customer accounts, carts, checkout, order history, wishlists, delivery information, installation information, branch details, and customer support.
+
+The main showroom is Cofkans Asuoyeboa Showroom in Asuoyeboa, Kumasi. Branch information is available at /branches.
+
+The public production domain has not been configured yet, so canonical URLs are intentionally omitted from this staging build.

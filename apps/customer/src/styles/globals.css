@@ -1,0 +1,497 @@
+/**
+ * Global typography — the luxurious brand type system.
+ *
+ * `--font-luxury` is the elegant display serif used across the gold storefront
+ * (hero headlines, section titles, the "Cofkans" wordmark) and the staff
+ * portals. The body defaults to Inter for clean, premium legibility.
+ */
+:root {
+  --font-luxury: 'Playfair Display', 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* ---- Grade-100 premium VIOLET brand (system-wide) ---------------------
+   * Indigo → violet → purple on a soft lavender-white canvas: a modern,
+   * premium ecommerce palette. Violet primary with a luminous gradient for
+   * headlines and CTAs. Overrides theme.css (loaded after it). The gradient
+   * variable names are kept (`--gradient-gold`, `--true-gold`, …) for
+   * compatibility — only their values changed to violet. */
+  --background: #FAF9FF;           /* soft lavender-white canvas */
+  --foreground: #1E1B4B;           /* deep indigo ink */
+  --card: #FFFFFF;
+  --card-foreground: #1E1B4B;
+
+  --primary: #7C3AED;              /* rich violet */
+  --primary-foreground: #FFFFFF;   /* white reads clean on violet */
+  --secondary: #F1EEFE;            /* soft violet surface */
+  --secondary-foreground: #4C1D95;
+  --accent: #A855F7;               /* bright purple accent */
+  --accent-foreground: #FFFFFF;
+  --muted: #F3F1FB;
+  --muted-foreground: #6D6A8A;
+  --ring: #7C3AED;
+  --border: rgba(124, 58, 237, 0.16);
+  --input-background: rgba(124, 58, 237, 0.05);
+  --color-surface-hover: rgba(124, 58, 237, 0.10);
+
+  /* Luminous violet sheen — indigo → violet → purple. */
+  --gradient-gold: linear-gradient(135deg, #4F46E5 0%, #6366F1 28%, #7C3AED 58%, #9333EA 82%, #A855F7 100%);
+  --gradient-gold-subtle: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(168, 85, 247, 0.06) 100%);
+  --true-gold: #A855F7;
+  --antique-gold: #7C3AED;
+}
+
+.dark {
+  /* Neutral charcoal surfaces: dark mode must read as dark, not violet. */
+  --background: #0B0D10;
+  --foreground: #F3F4F6;
+  --card: #12161B;
+  --card-foreground: #F3F4F6;
+
+  --primary: #A78BFA;              /* luminous violet on dark */
+  --primary-foreground: #17142B;
+  --secondary: #1B2027;
+  --secondary-foreground: #F3F4F6;
+  --accent: #C084FC;
+  --accent-foreground: #17142B;
+  --muted: #171B21;
+  --muted-foreground: #A7AFBA;
+  --ring: #A78BFA;
+  --border: rgba(255, 255, 255, 0.12);
+  --input-background: rgba(255, 255, 255, 0.05);
+  --color-surface-hover: rgba(255, 255, 255, 0.08);
+  --gradient-gold: linear-gradient(135deg, #6366F1 0%, #7C3AED 45%, #A855F7 70%, #C084FC 100%);
+  --gradient-gold-subtle: linear-gradient(135deg, rgba(167, 139, 250, 0.20) 0%, rgba(192, 132, 252, 0.08) 100%);
+  --true-gold: #C084FC;
+  --antique-gold: #A78BFA;
+}
+
+html,
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  min-height: 100%;
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-x: none;
+  scroll-behavior: smooth;
+}
+
+/* Expo Web's default reset uses `body { overflow: hidden }`, which is useful
+ * for native-style screens but prevents the storefront from scrolling. */
+#root {
+  min-height: 100vh;
+  height: auto;
+  overflow: visible;
+}
+
+button, a, input, select, textarea { touch-action: manipulation; }
+input, select, textarea { font-size: 16px; }
+
+@media (max-width: 639px) {
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  .mobile-bottom-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .mobile-cart-safe { bottom: max(5.5rem, calc(4rem + env(safe-area-inset-bottom))); }
+  .mobile-compare-safe { bottom: max(9.5rem, calc(8rem + env(safe-area-inset-bottom))); }
+}
+
+/* Keep controls crisp and flat: elevation belongs to surfaces, not buttons. */
+button,
+[role="button"] {
+  box-shadow: none !important;
+}
+
+/* Refined heading rhythm for the luxury display serif. */
+.font-luxury {
+  font-family: var(--font-luxury);
+}
+
+/* ---- Grade-100 luxury storefront utilities -----------------------------
+ * A small, reusable kit so the gold storefront reads consistently premium:
+ * metallic headline text, elegant hairline borders, glass surfaces, and a
+ * soft shimmer for CTAs. Scoped to plain classes (not `.erp-theme`). */
+
+/* Metallic gold headline — apply to section titles on light surfaces. */
+.lux-gold-text {
+  background: var(--gradient-gold);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Elegant hairline divider / border in violet. */
+.lux-hairline {
+  border-color: rgba(124, 58, 237, 0.18);
+}
+
+/* Premium card: crisp surface, soft violet shadow, refined hover lift. */
+.lux-card {
+  background: var(--card);
+  border: 1px solid rgba(124, 58, 237, 0.14);
+  box-shadow:
+    0 1px 2px rgba(30, 27, 75, 0.04),
+    0 12px 40px -18px rgba(76, 29, 149, 0.28);
+  transition:
+    transform 0.6s cubic-bezier(0.19, 1, 0.22, 1),
+    box-shadow 0.6s cubic-bezier(0.19, 1, 0.22, 1),
+    border-color 0.6s cubic-bezier(0.19, 1, 0.22, 1);
+}
+.lux-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(124, 58, 237, 0.34);
+  box-shadow:
+    0 2px 4px rgba(30, 27, 75, 0.05),
+    0 28px 70px -24px rgba(76, 29, 149, 0.42);
+}
+
+/* Frosted champagne glass — for sticky nav / floating chrome. */
+.lux-glass {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border-bottom: 1px solid rgba(124, 58, 237, 0.12);
+}
+.dark .lux-glass {
+  background: rgba(11, 13, 16, 0.82);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Product photography stays on a clean studio-white surface in dark mode. */
+.dark .product-image-surface {
+  background: #FFFFFF !important;
+}
+
+/* Sweeping shimmer for gold CTAs — add class, no extra markup needed. */
+.lux-sheen {
+  position: relative;
+  overflow: hidden;
+}
+.lux-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 48%,
+    transparent 72%
+  );
+  transform: translateX(-130%);
+  transition: transform 0.9s cubic-bezier(0.19, 1, 0.22, 1);
+  pointer-events: none;
+}
+.lux-sheen:hover::after {
+  transform: translateX(130%);
+}
+
+/* ---- Apple-style premium buttons --------------------------------------
+ * Soft, layered depth (ambient + contact shadow), a faint top-edge highlight
+ * for a "lit from above" feel, and a spring-smooth lift on hover / press on
+ * tap. Use `.btn-lux` as the base, then `-primary` (gold) or `-ghost`. */
+.btn-lux {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  isolation: isolate;
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.32s ease;
+  will-change: transform;
+}
+.btn-lux:active {
+  transform: scale(0.97) translateY(0);
+  transition-duration: 0.08s;
+}
+.btn-lux:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ring) 45%, transparent);
+}
+
+/* Primary — metallic gold, glossy, lifts on hover. */
+.btn-lux-primary {
+  color: var(--primary-foreground);
+  background: var(--gradient-gold);
+  background-size: 160% 160%;
+  background-position: 0% 50%;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(76, 29, 149, 0.35),
+    0 1px 2px rgba(46, 16, 101, 0.22),
+    0 8px 22px -8px rgba(124, 58, 237, 0.28);
+}
+.btn-lux-primary:hover {
+  transform: translateY(-2px);
+  background-position: 100% 50%;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(76, 29, 149, 0.40),
+    0 2px 4px rgba(46, 16, 101, 0.24),
+    0 18px 40px -12px rgba(124, 58, 237, 0.42);
+}
+
+/* Ghost — frosted, subtle, elegant on light surfaces. */
+.btn-lux-ghost {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 1px 2px rgba(30, 27, 75, 0.06),
+    0 8px 20px -12px rgba(76, 29, 149, 0.30);
+}
+.btn-lux-ghost:hover {
+  transform: translateY(-2px);
+  border-color: rgba(124, 58, 237, 0.42);
+  background: color-mix(in srgb, var(--card) 85%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 2px 4px rgba(30, 27, 75, 0.07),
+    0 16px 34px -14px rgba(76, 29, 149, 0.42);
+}
+
+/* Circular icon button — same physics, square footprint. */
+.btn-lux-icon {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border: 1px solid rgba(124, 58, 237, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 2px 6px rgba(30, 27, 75, 0.10),
+    0 10px 24px -14px rgba(76, 29, 149, 0.35);
+  transition:
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.3s ease,
+    color 0.3s ease;
+}
+.btn-lux-icon:hover {
+  transform: translateY(-2px) scale(1.06);
+  color: var(--primary-foreground);
+  background: var(--gradient-gold);
+  border-color: transparent;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 4px 10px rgba(46, 16, 101, 0.24),
+    0 16px 32px -12px rgba(124, 58, 237, 0.62);
+}
+.btn-lux-icon:active {
+  transform: scale(0.94);
+}
+
+/* ---- Product card kit — indigo/violet premium (storefront catalog only) -
+ * Scoped to `.pc-*` classes so ONLY the product catalogue cards adopt the
+ * purple ecommerce look; the rest of the gold storefront is untouched.
+ * Uses ease-out springs at 200–300ms for subtle, premium micro-interactions. */
+:root {
+  --pc-indigo: #6366f1;
+  --pc-violet: #7c3aed;
+  --pc-purple: #a855f7;
+  --pc-ink: #1e1b4b;                /* deep indigo ink for text accents */
+  --pc-grad: linear-gradient(135deg, #6366f1 0%, #7c3aed 52%, #a855f7 100%);
+  --pc-grad-soft: linear-gradient(135deg, rgba(99, 102, 241, 0.10) 0%, rgba(168, 85, 247, 0.06) 100%);
+}
+.dark {
+  --pc-ink: #c7d2fe;
+}
+
+/* Card shell — rounded, layered depth, refined lift on hover. */
+.pc-card {
+  border: 1px solid rgba(124, 58, 237, 0.12);
+  box-shadow:
+    0 1px 2px rgba(30, 27, 75, 0.04),
+    0 14px 40px -20px rgba(76, 29, 149, 0.28);
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.pc-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(124, 58, 237, 0.42);
+  box-shadow:
+    0 2px 6px rgba(30, 27, 75, 0.06),
+    0 30px 70px -26px rgba(76, 29, 149, 0.48);
+}
+
+/* Image stage — soft violet wash, generous whitespace, images never stretch. */
+.pc-media {
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.04) 45%, transparent 100%),
+    #f7f5ff;
+}
+.dark .pc-media {
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(168, 85, 247, 0.14) 0%, rgba(99, 102, 241, 0.08) 45%, transparent 100%),
+    #17142b;
+}
+
+/* Violet gradient text for the current price. */
+.pc-price {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 60%, #9333ea 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Pill badges — gradient for sale/featured, glass for neutral. */
+.pc-badge {
+  border-radius: 9999px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 16px -8px rgba(76, 29, 149, 0.55);
+}
+.pc-badge-grad {
+  color: #fff;
+  background: var(--pc-grad);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 6px 18px -8px rgba(124, 58, 237, 0.7);
+}
+.pc-badge-glass {
+  color: var(--pc-ink);
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(124, 58, 237, 0.18);
+}
+
+/* Floating circular action buttons (wishlist / cart / compare). */
+.pc-fab {
+  color: var(--pc-ink);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(124, 58, 237, 0.16);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 2px 6px rgba(30, 27, 75, 0.10),
+    0 12px 26px -14px rgba(76, 29, 149, 0.40);
+  transition:
+    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.24s ease,
+    color 0.24s ease;
+}
+.pc-fab:hover {
+  color: #fff;
+  background: var(--pc-grad);
+  border-color: transparent;
+  box-shadow:
+    0 4px 10px rgba(30, 27, 75, 0.18),
+    0 18px 34px -14px rgba(124, 58, 237, 0.65);
+}
+.dark .pc-fab {
+  color: var(--pc-ink);
+  background: rgba(30, 27, 60, 0.82);
+  border-color: rgba(168, 85, 247, 0.22);
+}
+
+/* Active (toggled-on) fab — solid violet. */
+.pc-fab-active {
+  color: #fff;
+  background: var(--pc-grad);
+  border-color: transparent;
+  box-shadow: 0 14px 30px -14px rgba(124, 58, 237, 0.7);
+}
+
+/* Primary action button — gradient, lifts and deepens shadow on hover. */
+.pc-btn-primary {
+  color: #fff;
+  background: var(--pc-grad);
+  background-size: 160% 160%;
+  background-position: 0% 50%;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    0 1px 2px rgba(46, 16, 101, 0.25),
+    0 10px 26px -10px rgba(124, 58, 237, 0.6);
+  transition:
+    transform 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+    background-position 0.4s ease;
+}
+.pc-btn-primary:hover {
+  transform: translateY(-2px);
+  background-position: 100% 50%;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 2px 4px rgba(46, 16, 101, 0.28),
+    0 20px 42px -12px rgba(124, 58, 237, 0.78);
+}
+.pc-btn-primary:active {
+  transform: scale(0.97);
+}
+
+/* Enquire / quantity chrome — violet-tinted, elegant secondary surface. */
+.pc-btn-soft {
+  color: var(--pc-ink);
+  background: var(--pc-grad-soft);
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  transition:
+    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.24s ease;
+}
+.pc-btn-soft:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124, 58, 237, 0.42);
+  box-shadow: 0 12px 26px -14px rgba(124, 58, 237, 0.5);
+}
+
+/* Category tab — active state in violet gradient. */
+.pc-tab-active {
+  color: #fff !important;
+  background: var(--pc-grad) !important;
+  border-color: transparent !important;
+  box-shadow: 0 12px 28px -12px rgba(124, 58, 237, 0.6) !important;
+}
+
+/* ---- Global luxury polish ---------------------------------------------- */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Violet text selection. */
+::selection {
+  background: rgba(124, 58, 237, 0.24);
+  color: var(--foreground);
+}
+
+/* Refined focus ring in brand violet. */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Slim, elegant violet scrollbar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 58, 237, 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(124, 58, 237, 0.30);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 58, 237, 0.50);
+  background-clip: padding-box;
+}

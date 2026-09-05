@@ -1,0 +1,11 @@
+{
+  "title": "Cofkans Electricals",
+  "description": "Lighting and electrical products for homes and businesses in Ghana.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

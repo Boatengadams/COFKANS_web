@@ -1,0 +1,18 @@
+{
+  "name": "Cofkans Electricals",
+  "short_name": "Cofkans",
+  "description": "Lighting and electrical products for homes and businesses in Ghana.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#08111f",
+  "theme_color": "#0f5132",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
