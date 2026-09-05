@@ -78,6 +78,8 @@ function requireDeveloper(req: CallableRequest): string {
 function requireStaffProvisioner(req: CallableRequest): string {
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign-in required.");
+  // Developer claim alone is enough (Staff portal developer may not carry role=developer).
+  if (req.auth?.token?.developer === true) return uid;
   if (req.auth?.token?.staff !== true) {
     throw new HttpsError("permission-denied", "Staff claim required.");
   }
@@ -645,12 +647,18 @@ export const setUserRole = onCall(
     if (role === "developer") {
       throw new HttpsError("invalid-argument", "Use setDeveloperClaim for developer access.");
     }
+    if (targetUid === actorUid) {
+      throw new HttpsError("failed-precondition", "Cannot change your own role via setUserRole.");
+    }
     const auth = getAuth();
     const db = getFirestore();
+    const existingClaims = (await auth.getUser(targetUid)).customClaims ?? {};
     await auth.setCustomUserClaims(targetUid, {
+      ...existingClaims,
       role,
       branchSlug,
       staff: role !== "customer",
+      developer: role === "developer" ? true : false,
     });
     await db.doc(`users/${targetUid}`).set({
       role,
@@ -659,9 +667,18 @@ export const setUserRole = onCall(
       promotedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     }, {merge: true});
+    const staffPatch: Record<string, unknown> = {
+      role,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid,
+    };
+    if (branchSlug !== undefined) staffPatch.branchSlug = branchSlug;
     if (role === "customer") {
-      await db.doc(`staffAccounts/${targetUid}`).set({active: false, revokedAt: FieldValue.serverTimestamp()}, {merge: true});
+      staffPatch.active = false;
+      staffPatch.status = "suspended";
+      staffPatch.revokedAt = FieldValue.serverTimestamp();
     }
+    await db.doc(`staffAccounts/${targetUid}`).set(staffPatch, {merge: true});
     await db.collection("auditLogs").add({
       action: "set_user_role",
       actorUid,
@@ -1444,13 +1461,34 @@ export const updateStaffAccount = onCall(
         throw new HttpsError("invalid-argument", "Use setDeveloperClaim for developer access.");
       }
       const branchSlug = optionalCleanString(patch.branchSlug, "branchSlug", 120);
+      const existingClaims = (await getAuth().getUser(targetUid)).customClaims ?? {};
       await getAuth().setCustomUserClaims(targetUid, {
+        ...existingClaims,
         role,
         branchSlug,
         staff: role !== "customer",
       });
       next.role = role;
       if (branchSlug !== undefined) next.branchSlug = branchSlug;
+    } else if (patch.branchSlug !== undefined) {
+      // Branch-only update: refresh claim branchSlug without changing role.
+      const existing = await getAuth().getUser(targetUid);
+      const claims = existing.customClaims ?? {};
+      const branchSlug = optionalCleanString(patch.branchSlug, "branchSlug", 120);
+      await getAuth().setCustomUserClaims(targetUid, {...claims, branchSlug});
+      next.branchSlug = branchSlug;
+    }
+
+    // Deactivate / reactivate mirrors Auth disabled flag (preserves Firestore history).
+    if (patch.active === false || patch.status === "suspended" || patch.status === "deactivated") {
+      next.active = false;
+      if (patch.status === undefined) next.status = "suspended";
+      await getAuth().updateUser(targetUid, {disabled: true});
+      await getAuth().revokeRefreshTokens(targetUid);
+    } else if (patch.active === true || patch.status === "active") {
+      next.active = true;
+      next.status = "active";
+      await getAuth().updateUser(targetUid, {disabled: false});
     }
 
     await getFirestore().doc(`staffAccounts/${targetUid}`).set(next, {merge: true});
@@ -1461,6 +1499,107 @@ export const updateStaffAccount = onCall(
       meta: {keys: Object.keys(next).filter((k) => k !== "updatedAt" && k !== "updatedBy")},
       at: FieldValue.serverTimestamp(),
     });
+    return {ok: true};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// permanentlyDeleteStaffAccount — irreversible Auth + staffAccounts removal.
+// Historical orders/audit remain; only identity record is deleted.
+// Developer-only.
+// ---------------------------------------------------------------------------
+export const permanentlyDeleteStaffAccount = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const actorUid = requireDeveloper(req);
+    const targetUid = cleanUid(req.data?.targetUid, "targetUid");
+    const confirmEmail = normalizeAnyEmail(req.data?.confirmEmail);
+    if (targetUid === actorUid) {
+      throw new HttpsError("failed-precondition", "Cannot permanently delete your own account.");
+    }
+    const auth = getAuth();
+    const db = getFirestore();
+    const user = await auth.getUser(targetUid);
+    if ((user.email ?? "").toLowerCase() !== confirmEmail) {
+      throw new HttpsError("invalid-argument", "confirmEmail must match the staff member's email exactly.");
+    }
+    const staffSnap = await db.doc(`staffAccounts/${targetUid}`).get();
+    if (staffSnap.exists && staffSnap.data()?.role === "developer") {
+      throw new HttpsError("failed-precondition", "Cannot permanently delete a developer account via this flow.");
+    }
+    await auth.deleteUser(targetUid);
+    await db.doc(`staffAccounts/${targetUid}`).delete().catch(() => undefined);
+    await db.doc(`totpSecrets/${targetUid}`).delete().catch(() => undefined);
+    await db.doc(`staffSessions/${targetUid}`).delete().catch(() => undefined);
+    await db.collection("auditLogs").add({
+      action: "staff_account_permanently_deleted",
+      actorUid,
+      targetUid,
+      meta: {email: confirmEmail},
+      at: FieldValue.serverTimestamp(),
+    });
+    return {ok: true};
+  }
+);
+
+// ---------------------------------------------------------------------------
+// resetStaffPassword — developer generates a one-time temporary password.
+// Returned to the caller once; not stored. Sets mustChangePassword claim so
+// Staff portal forces a password change after the next successful login.
+// ---------------------------------------------------------------------------
+export const resetStaffPassword = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const actorUid = requireDeveloper(req);
+    const targetUid = cleanUid(req.data?.targetUid, "targetUid");
+    if (targetUid === actorUid) {
+      throw new HttpsError("failed-precondition", "Use Firebase Auth account flows to change your own password.");
+    }
+    const auth = getAuth();
+    const user = await auth.getUser(targetUid);
+    if (user.disabled) {
+      throw new HttpsError("failed-precondition", "Reactivate the account before resetting the password.");
+    }
+    const temporaryPassword = generateTempPassword();
+    const claims = user.customClaims ?? {};
+    await auth.updateUser(targetUid, {password: temporaryPassword, disabled: false});
+    await auth.setCustomUserClaims(targetUid, {...claims, mustChangePassword: true});
+    await auth.revokeRefreshTokens(targetUid);
+    await getFirestore().doc(`staffAccounts/${targetUid}`).set({
+      mustChangePassword: true,
+      passwordResetAt: FieldValue.serverTimestamp(),
+      passwordResetBy: actorUid,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid,
+    }, {merge: true});
+    await getFirestore().collection("auditLogs").add({
+      action: "staff_password_reset",
+      actorUid,
+      targetUid,
+      meta: {email: user.email ?? null},
+      at: FieldValue.serverTimestamp(),
+    });
+    return {ok: true, temporaryPassword, email: user.email ?? null};
+  }
+);
+
+/** Clear mustChangePassword after the staff member sets a new password client-side. */
+export const clearMustChangePassword = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = req.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Sign-in required.");
+    const auth = getAuth();
+    const user = await auth.getUser(uid);
+    const claims = user.customClaims ?? {};
+    if (!claims.mustChangePassword) return {ok: true};
+    const {mustChangePassword: _drop, ...rest} = claims as Record<string, unknown>;
+    await auth.setCustomUserClaims(uid, rest);
+    await getFirestore().doc(`staffAccounts/${uid}`).set({
+      mustChangePassword: false,
+      passwordChangedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
     return {ok: true};
   }
 );

@@ -229,22 +229,36 @@ export default function ProductPage({ productId, onClose }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-background p-6 lg:p-12">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-4">
-        <nav className="flex items-center gap-2 text-sm text-gray-400">
-          <RouterLink href="/" className="text-[#4F3FF0] font-medium">Home</RouterLink>
-          <span className="text-gray-300">›</span>
-          <RouterLink href={`/category/${encodeURIComponent((product.categoryName || product.category || '').toLowerCase().replace(/\s+/g, '-'))}`} className="text-[#4F3FF0] font-medium">{product.categoryName || product.category}</RouterLink>
-          <span className="text-gray-300">›</span>
-          <RouterLink href={`/category/${encodeURIComponent((product.categoryName || product.category || '').toLowerCase().replace(/\s+/g, '-'))}#${encodeURIComponent((product.subcategory || '').toLowerCase().replace(/\s+/g, '-'))}`} className="text-[#4F3FF0] font-medium">{product.subcategory}</RouterLink>
-          <span className="text-gray-300">›</span>
-          <span className="text-gray-800 font-semibold">{product.name}</span>
+    <main className="min-h-screen bg-background p-3 sm:p-6 lg:p-12">
+      <div className="max-w-7xl mx-auto px-1 sm:px-4 lg:px-6 mb-4">
+        <nav className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-400 overflow-hidden">
+          <RouterLink href="/" className="text-[#4F3FF0] font-medium shrink-0">Home</RouterLink>
+          <span className="text-gray-300 shrink-0">›</span>
+          <RouterLink
+            href={`/category/${encodeURIComponent((product.categoryName || product.category || '').toLowerCase().replace(/\s+/g, '-'))}`}
+            className="text-[#4F3FF0] font-medium truncate max-w-[40vw] sm:max-w-none"
+          >
+            {product.categoryName || product.category}
+          </RouterLink>
+          {product.subcategory ? (
+            <>
+              <span className="text-gray-300 hidden sm:inline shrink-0">›</span>
+              <RouterLink
+                href={`/category/${encodeURIComponent((product.categoryName || product.category || '').toLowerCase().replace(/\s+/g, '-'))}#${encodeURIComponent((product.subcategory || '').toLowerCase().replace(/\s+/g, '-'))}`}
+                className="text-[#4F3FF0] font-medium hidden sm:inline truncate max-w-[28vw]"
+              >
+                {product.subcategory}
+              </RouterLink>
+            </>
+          ) : null}
+          <span className="text-gray-300 shrink-0">›</span>
+          <span className="text-gray-800 font-semibold truncate min-w-0 max-w-full">{product.name}</span>
         </nav>
       </div>
 
-      <div className="max-w-7xl mx-auto grid lg:grid-cols-[1.05fr_1fr_360px] gap-8">
+      <div className="max-w-7xl mx-auto grid lg:grid-cols-[1.05fr_1fr_360px] gap-4 sm:gap-6 lg:gap-8">
         {/* Left: Gallery */}
-        <section aria-labelledby="product-media" className="bg-card rounded-2xl p-4 lg:p-6">
+        <section aria-labelledby="product-media" className="bg-card rounded-2xl p-3 sm:p-4 lg:p-6">
           <div
             className="product-image-surface w-full aspect-[4/3] bg-muted rounded-xl flex items-center justify-center overflow-hidden relative"
             onTouchStart={onTouchStart}
@@ -312,8 +326,8 @@ export default function ProductPage({ productId, onClose }: Props) {
 
           {/* Lightbox */}
           {showLightbox && (
-            <div className="fixed inset-0 z-60 bg-black/90 flex items-center justify-center p-6" role="dialog" aria-modal="true">
-              <button onClick={closeLightbox} className="absolute right-6 top-6 p-3 rounded-full bg-white/10 text-white"><X className="w-5 h-5" /></button>
+            <div className="fixed inset-0 z-60 bg-black/90 flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true">
+              <button onClick={closeLightbox} className="absolute right-3 top-3 sm:right-6 sm:top-6 min-h-11 min-w-11 p-3 rounded-full bg-white/10 text-white inline-flex items-center justify-center"><X className="w-5 h-5" /></button>
               <div className="max-w-[92vw] max-h-[92vh] w-full">
                 {combinedMedia[activeIdx]?.type === 'image' ? (
                   <img src={combinedMedia[activeIdx].src} alt={`${product.name} large`} className="w-full h-full object-contain" />
@@ -326,17 +340,17 @@ export default function ProductPage({ productId, onClose }: Props) {
         </section>
 
         {/* Center: Info */}
-        <section aria-labelledby="product-info" className="bg-card rounded-2xl p-6 lg:p-8">
+        <section aria-labelledby="product-info" className="bg-card rounded-2xl p-4 sm:p-6 lg:p-8">
           <div className="flex items-center gap-3 mb-3">
-            <button onClick={onClose} aria-label="Back" className="p-2 rounded-lg bg-muted">
+            <button onClick={onClose} aria-label="Back" className="min-h-11 min-w-11 p-2 rounded-lg bg-muted inline-flex items-center justify-center">
               <ChevronLeft className="w-5 h-5" />
             </button>
-            <div className="text-xs font-bold uppercase text-[#4F3FF0]">{product.categoryName || product.category}</div>
+            <div className="text-xs font-bold uppercase text-[#4F3FF0] truncate">{product.categoryName || product.category}</div>
           </div>
 
-          <h1 id="product-info" className="text-2xl lg:text-3xl font-extrabold mb-3 max-h-[4.6rem] overflow-hidden">{product.name}</h1>
+          <h1 id="product-info" className="text-xl sm:text-2xl lg:text-3xl font-extrabold mb-3 max-h-[4.6rem] overflow-hidden">{product.name}</h1>
 
-          <div onClick={() => setTab('reviews')} className="flex items-center gap-4 mb-4 cursor-pointer">
+          <div onClick={() => setTab('reviews')} className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-4 cursor-pointer">
             <div className="flex items-center gap-1">
               {Array.from({ length: 5 }).map((_, i) => (
                 <Star key={i} className={`w-4 h-4 ${i < Math.floor((product.rating || 0)) ? 'text-amber-400 fill-amber-400' : 'text-muted'}`} />
@@ -344,17 +358,17 @@ export default function ProductPage({ productId, onClose }: Props) {
             </div>
             <div className="text-sm font-semibold">{product.rating ?? '—'}</div>
             <div className="text-sm text-muted-foreground">{product.reviewCount ?? product.reviews ?? 0} reviews</div>
-            <div className="text-sm text-muted-foreground">· SKU: {product.sku}</div>
+            <div className="text-sm text-muted-foreground truncate">· SKU: {product.sku}</div>
           </div>
 
           <p className="text-sm text-gray-600 leading-relaxed mb-4 max-h-[3.2rem] overflow-hidden">{media?.description || product.longDescription || product.description}</p>
 
           <div className="mb-4">
-            <div className="flex gap-2 items-center bg-muted/60 p-1 rounded-xl">
-              <button onClick={() => setTab('details')} className={`px-3 py-2 rounded-lg font-bold ${tab === 'details' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Description</button>
-              <button onClick={() => setTab('specs')} className={`px-3 py-2 rounded-lg font-bold ${tab === 'specs' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Specifications</button>
-              <button onClick={() => setTab('reviews')} className={`px-3 py-2 rounded-lg font-bold ${tab === 'reviews' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Reviews</button>
-              <button onClick={() => setTab('delivery')} className={`px-3 py-2 rounded-lg font-bold ${tab === 'delivery' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Delivery & Returns</button>
+            <div className="flex gap-2 items-center bg-muted/60 p-1 rounded-xl overflow-x-auto scrollbar-hide">
+              <button onClick={() => setTab('details')} className={`px-3 py-2 rounded-lg font-bold whitespace-nowrap shrink-0 ${tab === 'details' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Description</button>
+              <button onClick={() => setTab('specs')} className={`px-3 py-2 rounded-lg font-bold whitespace-nowrap shrink-0 ${tab === 'specs' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Specifications</button>
+              <button onClick={() => setTab('reviews')} className={`px-3 py-2 rounded-lg font-bold whitespace-nowrap shrink-0 ${tab === 'reviews' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Reviews</button>
+              <button onClick={() => setTab('delivery')} className={`px-3 py-2 rounded-lg font-bold whitespace-nowrap shrink-0 ${tab === 'delivery' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>Delivery & Returns</button>
             </div>
           </div>
 
@@ -448,26 +462,26 @@ export default function ProductPage({ productId, onClose }: Props) {
         </section>
 
         {/* Right: Purchase Card */}
-        <aside className="bg-card rounded-2xl p-6 lg:p-8 sticky top-6 h-min">
+        <aside className="bg-card rounded-2xl p-4 sm:p-6 lg:p-8 lg:sticky lg:top-6 h-min">
           <div className="mb-4">
             <div className="text-muted-foreground text-sm">Price</div>
-            <div className="text-3xl font-extrabold">GH₵ {price.toLocaleString()}</div>
+            <div className="text-2xl sm:text-3xl font-extrabold break-words">GH₵ {price.toLocaleString()}</div>
             {product.compareAtPrice && (
               <div className="text-sm line-through text-muted-foreground">GH₵ {product.compareAtPrice.toLocaleString()}</div>
             )}
           </div>
 
           <div className="flex items-center gap-3 mb-4">
-            <button onClick={() => setQty(q => Math.max(1, q-1))} className="w-10 h-10 rounded-lg bg-muted">-</button>
+            <button onClick={() => setQty(q => Math.max(1, q-1))} className="w-11 h-11 rounded-lg bg-muted inline-flex items-center justify-center" aria-label="Decrease quantity">-</button>
             <div className="font-bold text-lg text-center min-w-[2.5rem]">{qty}</div>
-            <button onClick={() => setQty(q => q+1)} className="w-10 h-10 rounded-lg bg-muted">+</button>
+            <button onClick={() => setQty(q => q+1)} className="w-11 h-11 rounded-lg bg-muted inline-flex items-center justify-center" aria-label="Increase quantity">+</button>
           </div>
 
           <div className="space-y-3">
-            <button onClick={handleAddToCart} className="w-full py-3 rounded-full bg-primary text-white font-bold flex items-center justify-center gap-3">
+            <button onClick={handleAddToCart} className="w-full min-h-12 py-3 rounded-full bg-primary text-white font-bold flex items-center justify-center gap-3">
               <ShoppingCart className="w-5 h-5" /> Add to Cart
             </button>
-            <button onClick={handleBuyNow} className="w-full py-3 rounded-full border-2 border-border font-bold">Buy Now · GH₵ {(price * qty).toLocaleString()}</button>
+            <button onClick={handleBuyNow} className="w-full min-h-12 py-3 rounded-full border-2 border-border font-bold">Buy Now · GH₵ {(price * qty).toLocaleString()}</button>
           </div>
 
           <div className="mt-6 text-sm text-muted-foreground">
@@ -488,22 +502,22 @@ export default function ProductPage({ productId, onClose }: Props) {
       </div>
 
       {/* Trust strip */}
-      <div className="max-w-7xl mx-auto mt-8 grid grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl bg-card border border-border text-center">
-          <div className="font-bold">Fast Delivery</div>
-          <div className="text-sm text-muted-foreground">Same-day in Accra</div>
+      <div className="max-w-7xl mx-auto mt-6 sm:mt-8 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+        <div className="p-3 sm:p-4 rounded-xl bg-card border border-border text-center">
+          <div className="font-bold text-sm sm:text-base">Fast Delivery</div>
+          <div className="text-xs sm:text-sm text-muted-foreground">Same-day in Accra</div>
         </div>
-        <div className="p-4 rounded-xl bg-card border border-border text-center">
-          <div className="font-bold">Genuine Products</div>
-          <div className="text-sm text-muted-foreground">Manufacturer-backed</div>
+        <div className="p-3 sm:p-4 rounded-xl bg-card border border-border text-center">
+          <div className="font-bold text-sm sm:text-base">Genuine Products</div>
+          <div className="text-xs sm:text-sm text-muted-foreground">Manufacturer-backed</div>
         </div>
-        <div className="p-4 rounded-xl bg-card border border-border text-center">
-          <div className="font-bold">Warranty</div>
-          <div className="text-sm text-muted-foreground">12 months standard</div>
+        <div className="p-3 sm:p-4 rounded-xl bg-card border border-border text-center">
+          <div className="font-bold text-sm sm:text-base">Warranty</div>
+          <div className="text-xs sm:text-sm text-muted-foreground">12 months standard</div>
         </div>
-        <div className="p-4 rounded-xl bg-card border border-border text-center">
-          <div className="font-bold">Expert Support</div>
-          <div className="text-sm text-muted-foreground">In-store & online</div>
+        <div className="p-3 sm:p-4 rounded-xl bg-card border border-border text-center">
+          <div className="font-bold text-sm sm:text-base">Expert Support</div>
+          <div className="text-xs sm:text-sm text-muted-foreground">In-store & online</div>
         </div>
       </div>
 

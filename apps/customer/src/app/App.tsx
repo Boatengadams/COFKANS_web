@@ -838,7 +838,7 @@ function AppContent() {
       <EmailVerificationBanner />
 
       {/* Cinematic Hero */}
-      <section className="relative h-[100vh] min-h-[680px] w-full overflow-hidden bg-[#080d18] dark:bg-foreground">
+      <section className="relative h-[100svh] min-h-[100svh] sm:min-h-[680px] w-full overflow-hidden bg-[#080d18] dark:bg-foreground">
         {heroSlides.map((slide, index) => (
           <motion.div
             key={index}

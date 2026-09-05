@@ -483,14 +483,15 @@ export function ProductCatalog({ user, onRequireAuth, initialCategory = 'all' }:
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setShowCart(true)}
-            className="mobile-cart-safe fixed right-3 z-50 flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-bold text-white shadow-2xl sm:right-8 sm:px-8 sm:py-5 sm:text-base"
+            className="mobile-cart-safe fixed right-3 z-50 flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full bg-primary px-3 py-3 text-sm font-bold text-white shadow-2xl sm:right-8 sm:max-w-none sm:px-8 sm:py-5 sm:text-base"
             style={{
               background: 'linear-gradient(135deg, var(--gradient-primary-from) 0%, var(--gradient-primary-to) 100%)'
             }}
           >
-            <ShoppingCart className="w-6 h-6" strokeWidth={2.5} />
-            <span>{cartItemCount} Items</span>
-            <span className="bg-white/20 px-3 py-1 rounded-full">GH₵ {cartTotal.toLocaleString()}</span>
+            <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6 flex-shrink-0" strokeWidth={2.5} />
+            <span className="sm:hidden">{cartItemCount}</span>
+            <span className="hidden sm:inline">{cartItemCount} Items</span>
+            <span className="bg-white/20 px-2 sm:px-3 py-1 rounded-full truncate max-w-[7.5rem] sm:max-w-none">GH₵ {cartTotal.toLocaleString()}</span>
           </motion.button>
         )}
       </AnimatePresence>

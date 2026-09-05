@@ -72,23 +72,24 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
     <div className="fixed inset-0 bg-background z-[100] overflow-y-auto">
       {/* Header */}
       <div className="sticky top-0 bg-background/95 backdrop-blur-lg border-b border-border z-50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-3 min-w-0">
             <motion.button
               whileHover={{ scale: 1.05, x: -2 }}
               whileTap={{ scale: 0.95 }}
               onClick={onClose}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl hover:bg-muted transition-all cursor-pointer"
+              className="flex items-center gap-2 min-h-11 px-2 sm:px-4 py-2 rounded-xl hover:bg-muted transition-all cursor-pointer flex-shrink-0"
             >
               <ArrowLeft className="w-5 h-5" strokeWidth={2.5} />
-              <span className="font-semibold">Back to Products</span>
+              <span className="font-semibold hidden sm:inline">Back to Products</span>
+              <span className="font-semibold sm:hidden">Back</span>
             </motion.button>
 
-            <div className="flex items-center gap-3">
-              <Package className="w-5 h-5 text-primary" strokeWidth={2.5} />
-              <div className="text-right">
-                <div className="text-sm font-semibold">{currentProduct?.name}</div>
-                <div className="text-xs text-muted-foreground">SKU: {currentProduct?.sku}</div>
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <Package className="w-5 h-5 text-primary flex-shrink-0" strokeWidth={2.5} />
+              <div className="text-right min-w-0">
+                <div className="text-xs sm:text-sm font-semibold truncate">{currentProduct?.name}</div>
+                <div className="text-[10px] sm:text-xs text-muted-foreground truncate">SKU: {currentProduct?.sku}</div>
               </div>
             </div>
           </div>
@@ -96,38 +97,38 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-12">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-6 md:py-12">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
         >
           {/* Product Info Header */}
-          <div className="text-center mb-16">
+          <div className="text-center mb-8 md:mb-16">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ delay: 0.2 }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-gold-subtle rounded-full mb-6 border border-primary/20"
+              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 bg-gradient-gold-subtle rounded-full mb-4 md:mb-6 border border-primary/20"
             >
               <Sparkles className="w-4 h-4 text-primary" strokeWidth={2.5} />
-              <span className="text-sm font-bold text-primary">Product Customization</span>
+              <span className="text-xs sm:text-sm font-bold text-primary">Product Customization</span>
             </motion.div>
-            <h1 className="text-4xl md:text-5xl font-bold mb-4" style={{ fontFamily: 'var(--font-luxury)' }}>
+            <h1 className="text-2xl sm:text-4xl md:text-5xl font-bold mb-3 md:mb-4 px-1" style={{ fontFamily: 'var(--font-luxury)' }}>
               {currentProduct?.name}
             </h1>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+            <p className="text-sm sm:text-base md:text-xl text-muted-foreground max-w-2xl mx-auto px-1">
               {currentProduct?.description || 'Customize your selection with available variants and options'}
             </p>
           </div>
 
           {/* Main Product Configuration Grid */}
-          <div className="grid lg:grid-cols-2 gap-12 items-start mb-16">
-            {/* Product Image & Details */}
-            <div className="sticky top-24">
-              <div className="bg-card rounded-3xl p-8 border-2 border-border shadow-xl">
+          <div className="grid lg:grid-cols-2 gap-6 lg:gap-12 items-start mb-10 md:mb-16">
+            {/* Product Image & Details — sticky only on large screens */}
+            <div className="lg:sticky lg:top-24">
+              <div className="bg-card rounded-2xl sm:rounded-3xl p-4 sm:p-8 border-2 border-border shadow-xl">
                 {/* Product Image */}
-                <div className="aspect-square relative overflow-hidden rounded-2xl bg-gradient-to-br from-muted/50 to-background mb-6">
+                <div className="aspect-square relative overflow-hidden rounded-2xl bg-gradient-to-br from-muted/50 to-background mb-4 sm:mb-6">
                   <AnimatePresence mode="wait">
                     <motion.div
                       key={currentProduct?.id}
@@ -135,7 +136,7 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.9 }}
                       transition={{ duration: 0.5 }}
-                      className="absolute inset-0 flex items-center justify-center p-8"
+                      className="absolute inset-0 flex items-center justify-center p-4 sm:p-8"
                     >
                       <img
                         src={resolveImageUrl(currentProduct?.image)}
@@ -253,15 +254,15 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
             </div>
 
             {/* Configuration Options */}
-            <div className="space-y-8">
+            <div className="space-y-6 sm:space-y-8">
               {/* Product Variants */}
               {productVariants.length > 0 && (
                 <div>
                   <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center font-bold shadow-md">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-primary text-white flex items-center justify-center font-bold shadow-md text-sm sm:text-base flex-shrink-0">
                       1
                     </div>
-                    <h4 className="text-xl font-bold">Available Variants</h4>
+                    <h4 className="text-lg sm:text-xl font-bold">Available Variants</h4>
                   </div>
                   <p className="text-sm text-muted-foreground mb-4">
                     Choose from {productVariants.length + 1} available options in this series
@@ -313,29 +314,31 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
               {/* Quantity Selector */}
               <div>
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center font-bold shadow-md">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-primary text-white flex items-center justify-center font-bold shadow-md text-sm sm:text-base flex-shrink-0">
                     {productVariants.length > 0 ? '2' : '1'}
                   </div>
-                  <h4 className="text-xl font-bold">Select Quantity</h4>
+                  <h4 className="text-lg sm:text-xl font-bold">Select Quantity</h4>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3 sm:gap-4">
                   <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                    className="w-12 h-12 rounded-xl bg-card hover:bg-muted border-2 border-border font-bold text-xl flex items-center justify-center transition-all cursor-pointer"
+                    className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-card hover:bg-muted border-2 border-border font-bold text-xl flex items-center justify-center transition-all cursor-pointer"
+                    aria-label="Decrease quantity"
                   >
                     −
                   </motion.button>
                   <div className="flex-1 text-center">
-                    <div className="text-4xl font-bold">{quantity}</div>
+                    <div className="text-3xl sm:text-4xl font-bold">{quantity}</div>
                     <div className="text-xs text-muted-foreground mt-1">Units</div>
                   </div>
                   <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => setQuantity(quantity + 1)}
-                    className="w-12 h-12 rounded-xl bg-card hover:bg-muted border-2 border-border font-bold text-xl flex items-center justify-center transition-all cursor-pointer"
+                    className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-card hover:bg-muted border-2 border-border font-bold text-xl flex items-center justify-center transition-all cursor-pointer"
+                    aria-label="Increase quantity"
                   >
                     +
                   </motion.button>
@@ -353,9 +356,9 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
               </div>
 
               {/* Price & Add to Cart */}
-              <div className="bg-gradient-to-br from-card via-card to-muted/30 p-8 rounded-3xl border-2 border-border shadow-xl">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
+              <div className="bg-gradient-to-br from-card via-card to-muted/30 p-4 sm:p-8 rounded-2xl sm:rounded-3xl border-2 border-border shadow-xl">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                  <div className="min-w-0">
                     <div className="text-sm text-muted-foreground mb-2 font-medium">
                       {tradePrice ? 'Retail Price' : 'Total Price'}
                     </div>
@@ -363,7 +366,7 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
                       key={totalPrice}
                       initial={{ scale: 1.2 }}
                       animate={{ scale: 1 }}
-                      className={`text-4xl font-bold ${tradePrice ? 'text-muted-foreground line-through' : 'text-primary'}`}
+                      className={`text-2xl sm:text-4xl font-bold break-words ${tradePrice ? 'text-muted-foreground line-through' : 'text-primary'}`}
                     >
                       GH₵ {totalPrice.toLocaleString()}
                     </motion.div>
@@ -371,7 +374,7 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
                       <motion.div
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="text-3xl font-bold text-primary mt-2"
+                        className="text-xl sm:text-3xl font-bold text-primary mt-2 break-words"
                       >
                         GH₵ {tradePrice.toLocaleString()}
                       </motion.div>
@@ -385,9 +388,9 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
                       )}
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="sm:text-right flex-shrink-0">
                     <div className="text-xs text-muted-foreground mb-2 font-medium">Delivery</div>
-                    <div className="text-lg font-bold flex items-center gap-2">
+                    <div className="text-base sm:text-lg font-bold flex items-center gap-2">
                       <Zap className="w-5 h-5 text-secondary" strokeWidth={2} />
                       2-3 Days
                     </div>
@@ -400,7 +403,7 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
                     whileTap={{ scale: 0.97 }}
                     onClick={handleAddToCart}
                     disabled={addedToCart || (currentProduct?.stock || 0) <= 0}
-                    className={`w-full py-4 rounded-2xl font-bold text-lg transition-all duration-300 flex items-center justify-center gap-3 cursor-pointer ${
+                    className={`w-full min-h-12 py-3.5 sm:py-4 rounded-2xl font-bold text-base sm:text-lg transition-all duration-300 flex items-center justify-center gap-3 cursor-pointer ${
                       addedToCart
                         ? 'bg-green-500 text-white shadow-xl'
                         : (currentProduct?.stock || 0) <= 0
@@ -443,7 +446,7 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
                 </div>
 
                 {/* Trust Badges */}
-                <div className="mt-6 pt-6 border-t border-border flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground">
+                <div className="mt-6 pt-6 border-t border-border flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-xs text-muted-foreground">
                   <div className="flex items-center gap-2">
                     <Check className="w-4 h-4 text-secondary" strokeWidth={2.5} />
                     <span>Premium Quality</span>
@@ -462,18 +465,18 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
           </div>
 
           {/* Wholesale Hub Section - Product Specific */}
-          <div className="mt-24">
-            <div className="bg-card rounded-3xl p-8 border-2 border-border shadow-xl">
-              <div className="flex items-center justify-between mb-6">
-                <div>
+          <div className="mt-12 md:mt-24">
+            <div className="bg-card rounded-2xl sm:rounded-3xl p-4 sm:p-8 border-2 border-border shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                <div className="min-w-0">
                   <div className="text-sm text-muted-foreground mb-1">Total Price</div>
-                  <div className="text-3xl font-bold text-primary">
+                  <div className="text-2xl sm:text-3xl font-bold text-primary break-words">
                     GH₵ {product.price.toLocaleString()}
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="sm:text-right min-w-0">
                   <div className="text-sm text-muted-foreground mb-1">Product Code</div>
-                  <div className="text-lg font-mono font-bold">{product.sku}</div>
+                  <div className="text-base sm:text-lg font-mono font-bold truncate">{product.sku}</div>
                 </div>
               </div>
 
@@ -515,27 +518,27 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
 
           {/* Related Products */}
           {relatedProducts.length > 0 && (
-            <div className="mt-20">
+            <div className="mt-12 md:mt-20">
               <motion.div
                 initial={{ opacity: 0, y: 30 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.6 }}
-                className="text-center mb-12"
+                className="text-center mb-8 md:mb-12"
               >
                 <div className="inline-flex items-center gap-2 mb-4 px-4 py-2 rounded-full bg-primary/10 border border-primary/20">
                   <Palette className="w-4 h-4 text-primary" strokeWidth={2} />
                   <span className="text-sm font-bold text-primary">Related Products</span>
                 </div>
-                <h2 className="text-3xl md:text-4xl font-bold mb-3" style={{ fontFamily: 'var(--font-luxury)' }}>
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-3" style={{ fontFamily: 'var(--font-luxury)' }}>
                   You May Also Like
                 </h2>
-                <p className="text-muted-foreground max-w-2xl mx-auto">
+                <p className="text-sm sm:text-base text-muted-foreground max-w-2xl mx-auto">
                   Explore similar products from the same category
                 </p>
               </motion.div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
                 {relatedProducts.slice(0, 6).map((relatedProduct, idx) => (
                   <motion.div
                     key={relatedProduct.id}
@@ -550,27 +553,27 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
                       <img
                         src={resolveImageUrl(relatedProduct.image)}
                         alt={relatedProduct.name}
-                        className="w-full h-full object-contain p-4"
+                        className="w-full h-full object-contain p-2 sm:p-4"
                       />
                       {relatedProduct.badge && (
-                        <div className="absolute top-3 right-3 px-2 py-1 bg-secondary/90 text-white rounded-full text-xs font-bold">
+                        <div className="absolute top-2 right-2 sm:top-3 sm:right-3 px-2 py-1 bg-secondary/90 text-white rounded-full text-[10px] sm:text-xs font-bold">
                           {relatedProduct.badge}
                         </div>
                       )}
                     </div>
-                    <div className="p-4">
-                      <code className="text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded">
+                    <div className="p-3 sm:p-4">
+                      <code className="text-[10px] sm:text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded truncate max-w-full inline-block">
                         {relatedProduct.sku}
                       </code>
-                      <h4 className="text-sm font-bold mt-2 line-clamp-2 group-hover:text-primary transition-colors">
+                      <h4 className="text-xs sm:text-sm font-bold mt-2 line-clamp-2 group-hover:text-primary transition-colors">
                         {relatedProduct.name}
                       </h4>
-                      <div className="mt-3 flex items-baseline gap-2">
-                        <div className="text-lg font-bold text-primary">
+                      <div className="mt-2 sm:mt-3 flex flex-wrap items-baseline gap-1 sm:gap-2">
+                        <div className="text-sm sm:text-lg font-bold text-primary">
                           GH₵ {relatedProduct.price.toLocaleString()}
                         </div>
                         {relatedProduct.tradePrice && relatedProduct.tradePrice < relatedProduct.price && (
-                          <div className="text-xs text-muted-foreground line-through">
+                          <div className="text-[10px] sm:text-xs text-muted-foreground line-through">
                             GH₵ {relatedProduct.tradePrice.toLocaleString()}
                           </div>
                         )}
@@ -583,22 +586,22 @@ export function ProductConfiguratorPage({ product, onClose }: ProductConfigurato
           )}
 
           {/* Wholesale Hub Section - Product Specific */}
-          <div className="mt-24">
+          <div className="mt-12 md:mt-24 pb-8 md:pb-0">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.6 }}
-              className="text-center mb-16"
+              className="text-center mb-8 md:mb-16"
             >
-              <div className="inline-flex items-center gap-2 mb-6 px-4 py-2 rounded-full bg-secondary/10 text-secondary border border-secondary/20">
+              <div className="inline-flex items-center gap-2 mb-4 md:mb-6 px-3 sm:px-4 py-2 rounded-full bg-secondary/10 text-secondary border border-secondary/20">
                 <Package className="w-4 h-4" strokeWidth={2.5} />
-                <span className="text-[15px] font-semibold">For Professionals & Bulk Buyers</span>
+                <span className="text-xs sm:text-[15px] font-semibold">For Professionals & Bulk Buyers</span>
               </div>
-              <h2 className="mb-6 text-4xl md:text-5xl font-bold" style={{ fontFamily: 'var(--font-luxury)' }}>
+              <h2 className="mb-4 md:mb-6 text-2xl sm:text-4xl md:text-5xl font-bold" style={{ fontFamily: 'var(--font-luxury)' }}>
                 Wholesale Hub
               </h2>
-              <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+              <p className="text-sm sm:text-base md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed px-1">
                 Real-time inventory for {currentProduct?.category} products and bulk orders
               </p>
             </motion.div>
