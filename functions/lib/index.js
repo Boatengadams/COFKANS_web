@@ -50,7 +50,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.forceSignOut = exports.setFeatureFlag = exports.auditLog = exports.verifyTotp = exports.enrollTotp = exports.setDeveloperClaim = exports.provisionStaffAccount = exports.paystackWebhook = exports.verifyPaystackPayment = exports.initializePaystackPayment = exports.resolveStockRequest = exports.updateStockTransfer = exports.createStockTransfer = exports.setUserRole = exports.updateOrderFulfillment = exports.createCheckoutOrder = void 0;
+exports.updateStaffAccount = exports.recordLoginAttempt = exports.forceSignOut = exports.setFeatureFlag = exports.auditLog = exports.verifyTotp = exports.enrollTotp = exports.setDeveloperClaim = exports.provisionStaffAccount = exports.paystackWebhook = exports.verifyPaystackPayment = exports.initializePaystackPayment = exports.resolveStockRequest = exports.updateStockTransfer = exports.createStockTransfer = exports.setUserRole = exports.updateOrderFulfillment = exports.createCheckoutOrder = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const params_1 = require("firebase-functions/params");
 const app_1 = require("firebase-admin/app");
@@ -93,7 +93,7 @@ const BRANCH_ORDER_STATUSES = new Set([
     "completed",
     "cancelled",
 ]);
-const STOCK_TRANSFER_STATUSES = new Set(["pending", "in_transit", "delivered", "cancelled"]);
+const STOCK_TRANSFER_STATUSES = new Set(["pending", "approved", "rejected", "in_transit", "delivered", "cancelled"]);
 function requireDeveloper(req) {
     const uid = req.auth?.uid;
     if (!uid)
@@ -189,6 +189,13 @@ function normalizeEmail(value) {
     }
     if (!email.endsWith(COMPANY_DOMAIN)) {
         throw new https_1.HttpsError("permission-denied", `Staff email must use ${COMPANY_DOMAIN}.`);
+    }
+    return email;
+}
+function normalizeAnyEmail(value) {
+    const email = cleanString(value, "email", 254).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new https_1.HttpsError("invalid-argument", "A valid email is required.");
     }
     return email;
 }
@@ -638,7 +645,7 @@ exports.createStockTransfer = (0, https_1.onCall)({ region: "us-central1" }, asy
     return { id: ref.id };
 });
 exports.updateStockTransfer = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
-    const uid = requireStaff(req, ["admin", "manager", "front_desk", "branch_desk", "warehouse", "rider", "driver"]);
+    const uid = requireStaff(req, ["admin", "manager", "branch_manager", "front_desk", "branch_desk", "warehouse", "rider", "driver"]);
     const transferId = cleanString(req.data?.transferId, "transferId", 160);
     const status = cleanString(req.data?.status, "status", 40);
     if (!STOCK_TRANSFER_STATUSES.has(status))
@@ -652,6 +659,15 @@ exports.updateStockTransfer = (0, https_1.onCall)({ region: "us-central1" }, asy
         const current = snap.data();
         if (current.status === "delivered")
             throw new https_1.HttpsError("failed-precondition", "Transfer is already delivered.");
+        const role = typeof req.auth?.token?.role === "string" ? req.auth.token.role : "";
+        const branchClaim = typeof req.auth?.token?.branchSlug === "string" ? req.auth.token.branchSlug : null;
+        const canGlobal = req.auth?.token?.developer === true || role === "admin" || role === "manager";
+        const from = current.fromBranch || current.fromBranchId;
+        const to = current.toBranch || current.toBranchId;
+        const canBranch = branchClaim && (from === branchClaim || to === branchClaim);
+        if (!canGlobal && !canBranch) {
+            throw new https_1.HttpsError("permission-denied", "You cannot update this transfer.");
+        }
         const patch = {
             status,
             updatedAt: firestore_1.FieldValue.serverTimestamp(),
@@ -661,6 +677,10 @@ exports.updateStockTransfer = (0, https_1.onCall)({ region: "us-central1" }, asy
             patch.driverId = uid;
         if (status === "delivered")
             patch.deliveredAt = firestore_1.FieldValue.serverTimestamp();
+        if (status === "approved" || status === "rejected") {
+            patch.reviewedBy = uid;
+            patch.reviewedAt = firestore_1.FieldValue.serverTimestamp();
+        }
         tx.update(ref, patch);
     });
     return { ok: true };
@@ -1104,5 +1124,156 @@ exports.forceSignOut = (0, https_1.onCall)({ region: "us-central1" }, async (req
     const targetUid = cleanUid(req.data?.targetUid, "targetUid");
     await (0, auth_1.getAuth)().revokeRefreshTokens(targetUid);
     await (0, firestore_1.getFirestore)().doc(`staffSessions/${targetUid}`).set({ revokedAt: firestore_1.FieldValue.serverTimestamp(), mfaVerifiedAt: null }, { merge: true });
+    return { ok: true };
+});
+// ---------------------------------------------------------------------------
+// recordLoginAttempt — Admin-only writes to /loginAttempts (client rules deny
+// all access). Callable may be invoked before the user is signed in.
+// ---------------------------------------------------------------------------
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+const LOGIN_DELAYS_MS = [0, 1000, 2000, 4000, 8000];
+exports.recordLoginAttempt = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const email = normalizeAnyEmail(req.data?.email);
+    const action = optionalCleanString(req.data?.action, "action", 16) ?? "fail";
+    const ipAddress = optionalCleanString(req.data?.ipAddress, "ipAddress", 64) ?? "unknown";
+    const trackerId = `login_${email}`;
+    const trackerRef = (0, firestore_1.getFirestore)().doc(`loginAttempts/${trackerId}`);
+    const now = new Date();
+    if (action === "clear") {
+        await trackerRef.set({
+            email,
+            attempts: 0,
+            lockedUntil: null,
+            lastAttemptAt: firestore_1.FieldValue.serverTimestamp(),
+            ipAddresses: firestore_1.FieldValue.arrayUnion(ipAddress),
+        }, { merge: true });
+        return { ok: true, isLocked: false, attemptsRemaining: LOGIN_MAX_ATTEMPTS, delayMs: 0 };
+    }
+    if (action === "status") {
+        const snap = await trackerRef.get();
+        if (!snap.exists) {
+            return { ok: true, isLocked: false, attemptsRemaining: LOGIN_MAX_ATTEMPTS, delayMs: 0 };
+        }
+        const data = snap.data();
+        const lockedUntil = data.lockedUntil?.toDate?.() ?? null;
+        if (lockedUntil && lockedUntil > now) {
+            return {
+                ok: true,
+                isLocked: true,
+                attemptsRemaining: 0,
+                lockedUntil: lockedUntil.toISOString(),
+                delayMs: 0,
+            };
+        }
+        const attempts = Number(data.attempts ?? 0);
+        return {
+            ok: true,
+            isLocked: false,
+            attemptsRemaining: Math.max(0, LOGIN_MAX_ATTEMPTS - attempts),
+            delayMs: 0,
+        };
+    }
+    const snap = await trackerRef.get();
+    if (snap.exists) {
+        const data = snap.data();
+        const lockedUntil = data.lockedUntil?.toDate?.() ?? null;
+        if (lockedUntil && lockedUntil > now) {
+            return {
+                ok: true,
+                isLocked: true,
+                attemptsRemaining: 0,
+                lockedUntil: lockedUntil.toISOString(),
+                delayMs: 0,
+            };
+        }
+        const newAttempts = Number(data.attempts ?? 0) + 1;
+        const ipAddresses = [...new Set([...(data.ipAddresses ?? []), ipAddress])];
+        if (newAttempts >= LOGIN_MAX_ATTEMPTS) {
+            const until = new Date(now.getTime() + LOGIN_LOCKOUT_MS);
+            await trackerRef.set({
+                email,
+                attempts: newAttempts,
+                lastAttemptAt: firestore_1.FieldValue.serverTimestamp(),
+                lockedUntil: until,
+                ipAddresses,
+            }, { merge: true });
+            return {
+                ok: true,
+                isLocked: true,
+                attemptsRemaining: 0,
+                lockedUntil: until.toISOString(),
+                delayMs: 0,
+            };
+        }
+        await trackerRef.set({
+            email,
+            attempts: newAttempts,
+            lastAttemptAt: firestore_1.FieldValue.serverTimestamp(),
+            lockedUntil: null,
+            ipAddresses,
+        }, { merge: true });
+        const delayIndex = Math.min(newAttempts - 1, LOGIN_DELAYS_MS.length - 1);
+        return {
+            ok: true,
+            isLocked: false,
+            attemptsRemaining: LOGIN_MAX_ATTEMPTS - newAttempts,
+            delayMs: LOGIN_DELAYS_MS[delayIndex],
+        };
+    }
+    await trackerRef.set({
+        email,
+        attempts: 1,
+        lastAttemptAt: firestore_1.FieldValue.serverTimestamp(),
+        ipAddresses: [ipAddress],
+    });
+    return {
+        ok: true,
+        isLocked: false,
+        attemptsRemaining: LOGIN_MAX_ATTEMPTS - 1,
+        delayMs: 0,
+    };
+});
+// ---------------------------------------------------------------------------
+// updateStaffAccount — manager/developer only. Role changes go through claims.
+// Direct client writes to /staffAccounts are denied by rules.
+// ---------------------------------------------------------------------------
+exports.updateStaffAccount = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const actorUid = requireStaffProvisioner(req);
+    const targetUid = cleanString(req.data?.targetUid, "targetUid", 160);
+    const patch = (req.data?.patch ?? {});
+    const allowedMeta = ["displayName", "phone", "active", "status", "branchSlug"];
+    const next = {
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+        updatedBy: actorUid,
+    };
+    for (const key of allowedMeta) {
+        if (patch[key] !== undefined)
+            next[key] = patch[key];
+    }
+    const roleRaw = patch.role;
+    if (roleRaw !== undefined) {
+        const role = normalizeRole(roleRaw);
+        if (role === "developer") {
+            throw new https_1.HttpsError("invalid-argument", "Use setDeveloperClaim for developer access.");
+        }
+        const branchSlug = optionalCleanString(patch.branchSlug, "branchSlug", 120);
+        await (0, auth_1.getAuth)().setCustomUserClaims(targetUid, {
+            role,
+            branchSlug,
+            staff: role !== "customer",
+        });
+        next.role = role;
+        if (branchSlug !== undefined)
+            next.branchSlug = branchSlug;
+    }
+    await (0, firestore_1.getFirestore)().doc(`staffAccounts/${targetUid}`).set(next, { merge: true });
+    await (0, firestore_1.getFirestore)().collection("auditLogs").add({
+        action: "staff_account_updated",
+        actorUid,
+        targetUid,
+        meta: { keys: Object.keys(next).filter((k) => k !== "updatedAt" && k !== "updatedBy") },
+        at: firestore_1.FieldValue.serverTimestamp(),
+    });
     return { ok: true };
 });
