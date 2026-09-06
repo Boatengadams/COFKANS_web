@@ -1,4 +1,5 @@
 rules_version = '2';
+// Canonical copy of COFKANS_WEB firestore.rules — do not diverge.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -239,6 +240,7 @@ service cloud.firestore {
     }
 
     // Alias for compatibility with existing order / branchSettings rules.
+    // Historically BM-only; prefer staffAssignedToBranch for portal reads.
     function isBranchStaff(slug) {
       return isBranchManagerOf(slug);
     }
@@ -277,6 +279,13 @@ service cloud.firestore {
 
     function isStaffPortalUser() {
       return isActiveStaff();
+    }
+
+    /** Any active portal staff whose staffAccounts.branchSlug matches. */
+    function staffAssignedToBranch(slug) {
+      return isStaffPortalUser()
+             && staffData().branchSlug != null
+             && staffData().branchSlug == slug;
     }
 
     // Product permission matrix:
@@ -431,16 +440,19 @@ service cloud.firestore {
     match /orders/{orderId} {
       // OWASP A01: Users can read their own orders
       // Admins, technicians, and assigned drivers can read orders.
-      // Company-wide general managers can read all orders.
-      // Branch staff can read every order routed to their branch.
+      // Company-wide general managers / developers can read all orders.
+      // Branch portal staff (front desk, BM, …) read orders for their assigned branchSlug.
       // Branch riders can read orders at their branch (so they see the queue).
       allow read: if isOwner(resource.data.userId) ||
                      isAdmin() ||
+                     isDeveloper() ||
                      isGeneralManager() ||
+                     isManagementSupport() ||
                      isTechnician() ||
                      (isDriver() && request.auth.uid == resource.data.driverId) ||
                      (resource.data.branchSlug != null &&
-                       (isBranchStaff(resource.data.branchSlug) ||
+                       (staffAssignedToBranch(resource.data.branchSlug) ||
+                        isBranchStaff(resource.data.branchSlug) ||
                         isBranchRider(resource.data.branchSlug)));
 
       // OWASP A04 & A08: Only active, email-verified users can create orders
@@ -493,20 +505,19 @@ service cloud.firestore {
     }
 
     match /inventory/{id} {
+      // Require a non-null staff branchSlug so unassigned staff cannot match via null == null.
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isActiveStaff() &&
-            (resource.data.branchSlug == staffData().branchSlug ||
-             resource.data.branchId == staffData().branchSlug));
+        || (staffAssignedToBranch(resource.data.branchSlug))
+        || (resource.data.branchId != null && staffAssignedToBranch(resource.data.branchId));
       allow write: if false; // CF only
     }
 
     match /stockTransfers/{id} {
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isActiveStaff() && (
-             resource.data.fromBranchId == staffData().branchSlug
-             || resource.data.toBranchId == staffData().branchSlug
-             || resource.data.fromBranchSlug == staffData().branchSlug
-             || resource.data.toBranchSlug == staffData().branchSlug));
+        || (resource.data.fromBranchId != null && staffAssignedToBranch(resource.data.fromBranchId))
+        || (resource.data.toBranchId != null && staffAssignedToBranch(resource.data.toBranchId))
+        || (resource.data.fromBranchSlug != null && staffAssignedToBranch(resource.data.fromBranchSlug))
+        || (resource.data.toBranchSlug != null && staffAssignedToBranch(resource.data.toBranchSlug));
       allow create: if false;
       allow update: if false;
       allow delete: if false;
@@ -514,25 +525,42 @@ service cloud.firestore {
 
     match /stockRequests/{id} {
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isActiveStaff() &&
-            (resource.data.branchId == staffData().branchSlug ||
-             resource.data.branchSlug == staffData().branchSlug));
+        || (resource.data.branchId != null && staffAssignedToBranch(resource.data.branchId))
+        || (resource.data.branchSlug != null && staffAssignedToBranch(resource.data.branchSlug));
       allow write: if false;
     }
 
     match /approvals/{id} {
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isActiveStaff() &&
-            (resource.data.branchId == staffData().branchSlug ||
-             resource.data.branchId == 'all'));
+        || (resource.data.branchId == 'all' && isActiveStaff() && staffData().branchSlug != null)
+        || (resource.data.branchId != null && staffAssignedToBranch(resource.data.branchId));
       allow create: if isStaffPortalUser() &&
                        (isGeneralManager() || isDeveloper() ||
-                        request.resource.data.branchId == staffData().branchSlug);
+                        (staffData().branchSlug != null &&
+                         request.resource.data.branchId == staffData().branchSlug));
       allow update: if isGeneralManager() || isDeveloper()
         || (isBranchManager() && resource.data.branchId == staffData().branchSlug
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['status', 'reviewedBy', 'reviewedByName', 'reviewedAt', 'updatedAt']));
       allow delete: if isDeveloper();
+    }
+
+    // Staff portal activity feed (branch-scoped).
+    // Do NOT use this collection for customer personalization — see customerActivity.
+    match /userActivity/{id} {
+      allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
+        || (resource.data.branchId != null && staffAssignedToBranch(resource.data.branchId))
+        || (resource.data.branchSlug != null && staffAssignedToBranch(resource.data.branchSlug));
+      allow create: if isStaffPortalUser();
+      allow update, delete: if isDeveloper();
+    }
+
+    // Customer personalization (search/views/wishlist/purchases). Owner-only.
+    match /customerActivity/{uid} {
+      allow read, write: if isSignedIn()
+        && request.auth.uid == uid
+        && isActiveUser()
+        && accountNotLocked();
     }
 
     match /reports/{id} {
@@ -551,25 +579,30 @@ service cloud.firestore {
 
     // ===== STAFF PORTAL CRM / COLLABORATION =====
 
+    // Leads/quotes: GM/dev/support = all; BM = branch; rep = assignedTo only.
     match /crmLeads/{id} {
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+        || (isBranchManager() && resource.data.branchId == staffData().branchSlug)
+        || (isStaffPortalUser() && resource.data.assignedTo == request.auth.uid);
       allow create: if isStaffPortalUser() && (
         isGeneralManager() || isDeveloper() ||
         request.resource.data.branchId == staffData().branchSlug);
       allow update: if isGeneralManager() || isDeveloper()
-        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+        || (isBranchManager() && resource.data.branchId == staffData().branchSlug)
+        || (isStaffPortalUser() && resource.data.assignedTo == request.auth.uid);
       allow delete: if isGeneralManager() || isDeveloper();
     }
 
     match /crmQuotes/{id} {
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+        || (isBranchManager() && resource.data.branchId == staffData().branchSlug)
+        || (isStaffPortalUser() && resource.data.assignedTo == request.auth.uid);
       allow create: if isStaffPortalUser() && (
         isGeneralManager() || isDeveloper() ||
         request.resource.data.branchId == staffData().branchSlug);
       allow update: if isGeneralManager() || isDeveloper()
-        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+        || (isBranchManager() && resource.data.branchId == staffData().branchSlug)
+        || (isStaffPortalUser() && resource.data.assignedTo == request.auth.uid);
       allow delete: if isGeneralManager() || isDeveloper();
     }
 
@@ -611,6 +644,12 @@ service cloud.firestore {
         || (isStaffPortalUser() && resource.data.createdBy == request.auth.uid);
     }
 
+    // Company policies / handbooks — all staff read; GM/Developer write only.
+    match /staffPolicies/{id} {
+      allow read: if isStaffPortalUser();
+      allow create, update, delete: if isGeneralManager() || isDeveloper();
+    }
+
     match /staffMessages/{id} {
       allow read: if isStaffPortalUser() && (
         isGeneralManager() || isDeveloper() ||
@@ -628,7 +667,7 @@ service cloud.firestore {
     match /staffMeetings/{id} {
       allow read: if isStaffPortalUser() && (
         isGeneralManager() || isDeveloper() ||
-        resource.data.branchId == staffData().branchSlug ||
+        (resource.data.branchId != null && staffAssignedToBranch(resource.data.branchId)) ||
         resource.data.createdBy == request.auth.uid);
       allow create: if isStaffPortalUser();
       allow update: if isGeneralManager() || isDeveloper()
@@ -643,23 +682,25 @@ service cloud.firestore {
 
     match /localSales/{id} {
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isStaffPortalUser() && resource.data.branchId == staffData().branchSlug);
+        || (resource.data.branchId != null && staffAssignedToBranch(resource.data.branchId));
       allow create: if isStaffPortalUser() && (
         isGeneralManager() || isDeveloper() ||
-        request.resource.data.branchId == staffData().branchSlug);
+        (staffData().branchSlug != null &&
+         request.resource.data.branchId == staffData().branchSlug));
       allow update, delete: if isGeneralManager() || isDeveloper();
     }
 
     match /conversations/{id} {
       allow read: if isGeneralManager() || isDeveloper() || isManagementSupport()
-        || (isStaffPortalUser() &&
-            (resource.data.branchId == staffData().branchSlug ||
-             resource.data.branchSlug == staffData().branchSlug));
+        || (resource.data.branchId != null && staffAssignedToBranch(resource.data.branchId))
+        || (resource.data.branchSlug != null && staffAssignedToBranch(resource.data.branchSlug));
       allow create, update: if isStaffPortalUser() && (
         isGeneralManager() || isDeveloper()
-        || request.resource.data.branchId == staffData().branchSlug
-        || request.resource.data.branchSlug == staffData().branchSlug
-        || resource.data.branchId == staffData().branchSlug);
+        || (staffData().branchSlug != null && (
+              request.resource.data.branchId == staffData().branchSlug
+              || request.resource.data.branchSlug == staffData().branchSlug
+              || resource.data.branchId == staffData().branchSlug
+              || resource.data.branchSlug == staffData().branchSlug)));
       allow delete: if isGeneralManager() || isDeveloper();
     }
 

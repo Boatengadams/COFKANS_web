@@ -53,7 +53,7 @@ export const trackSearch = async (userId: string, searchTerm: string, category?:
   local().track({ kind: 'search', query: searchTerm, at: Date.now() });
   if (!userId) return;
   try {
-    const activityRef = doc(db, 'userActivity', userId);
+    const activityRef = doc(db, 'customerActivity', userId);
     const activityDoc = await getDoc(activityRef);
 
     const searchQuery: SearchQuery = {
@@ -101,7 +101,7 @@ export const trackProductView = async (
   }
   if (!userId) return;
   try {
-    const activityRef = doc(db, 'userActivity', userId);
+    const activityRef = doc(db, 'customerActivity', userId);
     const activityDoc = await getDoc(activityRef);
 
     const viewedProduct: ViewedProduct = {
@@ -143,7 +143,7 @@ export const trackWishlistAdd = async (userId: string, productId: string) => {
   local().track({ kind: 'wishlist', productId, at: Date.now() });
   if (!userId) return;
   try {
-    const activityRef = doc(db, 'userActivity', userId);
+    const activityRef = doc(db, 'customerActivity', userId);
     await setDoc(
       activityRef,
       {
@@ -161,7 +161,7 @@ export const trackWishlistAdd = async (userId: string, productId: string) => {
 export const trackWishlistRemove = async (userId: string, productId: string) => {
   if (!userId) return;
   try {
-    const activityRef = doc(db, 'userActivity', userId);
+    const activityRef = doc(db, 'customerActivity', userId);
     const activityDoc = await getDoc(activityRef);
 
     if (activityDoc.exists()) {
@@ -186,7 +186,7 @@ export const trackPurchase = async (
   for (const it of items) local().track({ kind: 'purchase', productId: it.productId, category: it.category, at: now });
   if (!userId) return;
   try {
-    const activityRef = doc(db, 'userActivity', userId);
+    const activityRef = doc(db, 'customerActivity', userId);
     const activityDoc = await getDoc(activityRef);
 
     const purchaseItems: PurchaseItem[] = items.map(item => ({
@@ -222,7 +222,7 @@ export const trackPurchase = async (
 
 export const getUserActivity = async (userId: string): Promise<UserActivity | null> => {
   try {
-    const activityRef = doc(db, 'userActivity', userId);
+    const activityRef = doc(db, 'customerActivity', userId);
     const activityDoc = await getDoc(activityRef);
 
     if (activityDoc.exists()) {
