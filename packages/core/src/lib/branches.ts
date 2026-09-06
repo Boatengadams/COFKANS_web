@@ -43,7 +43,93 @@ export interface Branch {
   isMain?: boolean;
   /** Sort key for storefront + checkout (lower = first). */
   displayOrder?: number;
+  /** WGS84 latitude — from Firestore when present, else seed catalog. */
+  lat?: number;
+  /** WGS84 longitude — from Firestore when present, else seed catalog. */
+  lng?: number;
 }
+
+export type CustomerCoords = { lat: number; lng: number };
+
+/** Haversine distance in kilometres. */
+export function distanceKm(a: CustomerCoords, b: CustomerCoords): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export function branchHasCoords(b: Branch): b is Branch & { lat: number; lng: number } {
+  return typeof b.lat === 'number' && Number.isFinite(b.lat)
+    && typeof b.lng === 'number' && Number.isFinite(b.lng);
+}
+
+/** Default catalog order: displayOrder → main flag → name. */
+export function sortBranchesCatalog(branches: Branch[]): Branch[] {
+  return [...branches].sort((a, b) => {
+    const ao = a.displayOrder ?? 9999;
+    const bo = b.displayOrder ?? 9999;
+    if (ao !== bo) return ao - bo;
+    if (!!b.isMain !== !!a.isMain) return b.isMain ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/**
+ * Sort by distance from `origin` when both sides have coordinates.
+ * Branches missing lat/lng keep relative catalog order at the end.
+ */
+export function sortBranchesByDistance(branches: Branch[], origin: CustomerCoords): Branch[] {
+  const withDist: Array<{ branch: Branch; dist: number | null; idx: number }> = branches.map((branch, idx) => ({
+    branch,
+    dist: branchHasCoords(branch) ? distanceKm(origin, { lat: branch.lat, lng: branch.lng }) : null,
+    idx,
+  }));
+  withDist.sort((a, b) => {
+    if (a.dist == null && b.dist == null) return a.idx - b.idx;
+    if (a.dist == null) return 1;
+    if (b.dist == null) return -1;
+    if (a.dist !== b.dist) return a.dist - b.dist;
+    return a.idx - b.idx;
+  });
+  return withDist.map((row) => row.branch);
+}
+
+function parseCoord(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+/** Read lat/lng from a Firestore branch doc (several historical field shapes). */
+export function coordsFromBranchDoc(data: Record<string, unknown>): { lat?: number; lng?: number } {
+  const lat = parseCoord(data.lat) ?? parseCoord(data.latitude);
+  const lng = parseCoord(data.lng) ?? parseCoord(data.longitude);
+  if (lat != null && lng != null) return { lat, lng };
+  const location = data.location as { latitude?: number; longitude?: number } | undefined;
+  if (location && typeof location.latitude === 'number' && typeof location.longitude === 'number') {
+    return { lat: location.latitude, lng: location.longitude };
+  }
+  const geo = data.geo as { lat?: number; lng?: number } | undefined;
+  if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+    return { lat: geo.lat, lng: geo.lng };
+  }
+  return {};
+}
+
+const seedCoordsBySlug = (): Map<string, CustomerCoords> => {
+  const map = new Map<string, CustomerCoords>();
+  for (const b of SEED_BRANCHES) {
+    if (branchHasCoords(b)) map.set(b.slug, { lat: b.lat, lng: b.lng });
+  }
+  return map;
+};
 
 /**
  * Convert a Ghana phone like "024-7603798" or "055 3298335" to E.164
@@ -70,6 +156,12 @@ function branch(b: Omit<Branch, 'phone' | 'phonesE164' | 'phones'> & { phones: s
  * Real Cofkans Electricals branch network. Customers see these immediately
  * (no Firestore write required). Developers can override any field live by
  * syncing the seed into Firestore from the Branch portal.
+ *
+ * APPROXIMATION (client-only): lat/lng below are estimated area coordinates
+ * for nearest-branch sorting. Live Firestore /branches docs currently omit
+ * lat/lng — we merge these seed coords by slug in memory only and MUST NOT
+ * write them into Firestore. Replace with real branch coordinates in
+ * Firestore when available; seed fallback can then be removed.
  */
 export const SEED_BRANCHES: Branch[] = [
   // Kumasi (Ashanti Region)
@@ -84,6 +176,8 @@ export const SEED_BRANCHES: Branch[] = [
     isActive: true,
     isMain: true,
     displayOrder: 1,
+    lat: 6.7004,
+    lng: -1.6918,
   }),
   branch({
     slug: 'kumasi-adum',
@@ -95,6 +189,8 @@ export const SEED_BRANCHES: Branch[] = [
     hours: 'Mon–Sat 8:00am – 5:00pm',
     isActive: true,
     displayOrder: 2,
+    lat: 6.6885,
+    lng: -1.6244,
   }),
   branch({
     slug: 'kumasi-pampaso',
@@ -106,6 +202,8 @@ export const SEED_BRANCHES: Branch[] = [
     hours: 'Mon–Sat 8:00am – 5:00pm',
     isActive: true,
     displayOrder: 3,
+    lat: 6.682,
+    lng: -1.618,
   }),
   branch({
     slug: 'kumasi-abuakwa',
@@ -117,6 +215,8 @@ export const SEED_BRANCHES: Branch[] = [
     hours: 'Mon–Sat 8:00am – 5:00pm',
     isActive: true,
     displayOrder: 4,
+    lat: 6.712,
+    lng: -1.65,
   }),
   branch({
     slug: 'kumasi-nkawie',
@@ -128,6 +228,8 @@ export const SEED_BRANCHES: Branch[] = [
     hours: 'Mon–Sat 8:00am – 5:00pm',
     isActive: true,
     displayOrder: 5,
+    lat: 6.666,
+    lng: -1.82,
   }),
   // Greater Accra Region
   branch({
@@ -140,6 +242,8 @@ export const SEED_BRANCHES: Branch[] = [
     hours: 'Mon–Sat 8:00am – 5:00pm',
     isActive: true,
     displayOrder: 6,
+    lat: 5.5715,
+    lng: -0.333,
   }),
   // Obuasi (Ashanti Region)
   branch({
@@ -152,6 +256,8 @@ export const SEED_BRANCHES: Branch[] = [
     hours: 'Mon–Sat 8:00am – 5:00pm',
     isActive: true,
     displayOrder: 7,
+    lat: 6.202,
+    lng: -1.683,
   }),
 ];
 
@@ -173,36 +279,38 @@ export function subscribeBranches(cb: (branches: Branch[]) => void): () => void 
     const unsub = onSnapshot(
       collection(db, 'branches'),
       (snap) => {
+        const seedCoords = seedCoordsBySlug();
         const rows = snap.docs.map((d) => {
-          const data = d.data() as any;
-          const phones: string[] | undefined = Array.isArray(data.phones) && data.phones.length
-            ? data.phones
-            : data.phone ? [data.phone] : undefined;
+          const data = d.data() as Record<string, unknown>;
+          const phones: string[] | undefined = Array.isArray(data.phones) && (data.phones as string[]).length
+            ? (data.phones as string[])
+            : data.phone ? [String(data.phone)] : undefined;
+          const slug = String(data.slug || d.id);
+          // Prefer real Firestore coords when present. Otherwise fall back to
+          // seed estimates (client-side only — never persist fabricated coords).
+          const fromDoc = coordsFromBranchDoc(data);
+          const fromSeed = seedCoords.get(slug);
+          const lat = fromDoc.lat ?? fromSeed?.lat;
+          const lng = fromDoc.lng ?? fromSeed?.lng;
           return {
-            slug: data.slug || d.id,
-            name: data.name || d.id,
-            city: data.city || '',
-            region: data.region || '',
-            address: data.address || '',
+            slug,
+            name: String(data.name || d.id),
+            city: String(data.city || ''),
+            region: String(data.region || ''),
+            address: String(data.address || ''),
             phone: phones?.[0],
             phones,
             phonesE164: phones?.map(ghToE164),
-            hours: data.hours,
+            hours: typeof data.hours === 'string' ? data.hours : undefined,
             isActive: data.isActive !== false,
             isMain: data.isMain === true,
             displayOrder: typeof data.displayOrder === 'number' ? data.displayOrder : undefined,
+            lat,
+            lng,
           } as Branch;
         });
-        // Sort: explicit displayOrder first, then main flag, then name.
-        rows.sort((a, b) => {
-          const ao = a.displayOrder ?? 9999;
-          const bo = b.displayOrder ?? 9999;
-          if (ao !== bo) return ao - bo;
-          if (!!b.isMain !== !!a.isMain) return b.isMain ? 1 : -1;
-          return a.name.localeCompare(b.name);
-        });
         // If Firestore is empty, keep the seed so checkout still works.
-        cache = rows.length ? rows : [...SEED_BRANCHES];
+        cache = sortBranchesCatalog(rows.length ? rows : [...SEED_BRANCHES]);
         cb(cache);
       },
       (err) => {
@@ -219,15 +327,20 @@ export function subscribeBranches(cb: (branches: Branch[]) => void): () => void 
   }
 }
 
-export function useBranches(activeOnly = true): Branch[] {
+/**
+ * Subscribe to active branches. When `origin` is provided, sort by distance
+ * (branches without coordinates stay at the end in catalog order).
+ */
+export function useBranches(activeOnly = true, origin: CustomerCoords | null = null): Branch[] {
   const [branches, setBranches] = useState<Branch[]>(
     activeOnly ? getActiveBranches() : cache,
   );
   useEffect(() => {
     return subscribeBranches((rows) => {
-      setBranches(activeOnly ? rows.filter((b) => b.isActive) : rows);
+      const filtered = activeOnly ? rows.filter((b) => b.isActive) : rows;
+      setBranches(origin ? sortBranchesByDistance(filtered, origin) : sortBranchesCatalog(filtered));
     });
-  }, [activeOnly]);
+  }, [activeOnly, origin?.lat, origin?.lng]);
   return branches;
 }
 
