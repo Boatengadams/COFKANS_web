@@ -556,8 +556,14 @@ function AppContent() {
         <div className="min-h-screen w-full bg-background text-foreground antialiased">
           <Suspense fallback={<PageFallback />}>
             <CheckoutPage
-              onBack={() => setCurrentView('home')}
-              onComplete={() => setCurrentView('user-dashboard')}
+              onBack={() => {
+                useCartStore.getState().clearBuyNow();
+                setCurrentView('home');
+              }}
+              onComplete={() => {
+                useCartStore.getState().clearBuyNow();
+                setCurrentView('user-dashboard');
+              }}
             />
           </Suspense>
         </div>

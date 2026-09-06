@@ -54,6 +54,8 @@ interface CartStore {
   cart: FirestoreCart | null;
   isLoading: boolean;
   isInitialized: boolean;
+  /** Ephemeral single-item (or multi) checkout payload — never written to Firestore carts. */
+  buyNowItems: CartItem[] | null;
 
   // Actions
   initializeCart: (userId: string) => Promise<void>;
@@ -63,6 +65,9 @@ interface CartStore {
   removeLocalItem: (productId: string, variantId: string | null) => void;
   clearCart: (userId: string) => Promise<void>;
   refreshCart: (userId: string) => Promise<void>;
+  startBuyNow: (items: Array<Omit<CartItem, 'subtotal'> | CartItem>) => void;
+  clearBuyNow: () => void;
+  resetLocalCart: () => void;
 
   // Computed
   getItemCount: () => number;
@@ -78,6 +83,7 @@ export const useCartStore = create<CartStore>()(
       cart: null,
       isLoading: false,
       isInitialized: false,
+      buyNowItems: null,
 
       // Initialize cart from Firebase.
       // Resilient: races with user-doc creation on first signup can cause a
@@ -88,9 +94,15 @@ export const useCartStore = create<CartStore>()(
       initializeCart: async (userId: string) => {
         if (!userId) return;
 
+        // Drop another customer's persisted cart before loading this uid.
+        const existing = get().cart;
+        if (existing && existing.userId && existing.userId !== userId) {
+          set({ cart: null, buyNowItems: null, isInitialized: false });
+        }
+
         if (DEMO_MODE) {
-          const existing = get().cart;
-          set({ cart: existing && existing.userId === userId ? normalizeCart(existing, userId) : demoEmptyCart(userId), isInitialized: true, isLoading: false });
+          const current = get().cart;
+          set({ cart: current && current.userId === userId ? normalizeCart(current, userId) : demoEmptyCart(userId), isInitialized: true, isLoading: false });
           return;
         }
 
@@ -127,6 +139,25 @@ export const useCartStore = create<CartStore>()(
           set({ cart: demoEmptyCart(userId), isInitialized: true, isLoading: false });
         }
       },
+
+      startBuyNow: (items) => {
+        const normalized = items.map((item) => ({
+          ...item,
+          subtotal: 'subtotal' in item && typeof item.subtotal === 'number'
+            ? item.subtotal
+            : (item.price ?? 0) * (item.quantity ?? 0),
+        })) as CartItem[];
+        set({ buyNowItems: normalized });
+      },
+
+      clearBuyNow: () => set({ buyNowItems: null }),
+
+      resetLocalCart: () => set({
+        cart: null,
+        buyNowItems: null,
+        isInitialized: false,
+        isLoading: false,
+      }),
 
       // Add item to cart
       addItem: async (userId: string, itemData: Omit<CartItem, 'subtotal'>) => {
@@ -315,7 +346,7 @@ export const useCartStore = create<CartStore>()(
         removeItem: () => {},
       }),
       partialize: (state) => ({
-        // Only persist cart data, not loading states
+        // Only persist cart data, not loading states or ephemeral Buy Now
         cart: state.cart,
       }),
     }

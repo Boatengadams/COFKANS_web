@@ -53,10 +53,13 @@ interface ShippingAddress {
 
 export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
   const { user } = useFirebaseAuth();
-  const { cart, clearCart } = useCartStore();
+  const { cart, clearCart, buyNowItems, clearBuyNow } = useCartStore();
   const branches = useBranches(true);
-  const items = cart?.items || [];
-  const total = cart?.total || 0;
+  const isBuyNow = Array.isArray(buyNowItems) && buyNowItems.length > 0;
+  const items = isBuyNow ? buyNowItems! : (cart?.items || []);
+  const total = isBuyNow
+    ? buyNowItems!.reduce((sum, item) => sum + (item.subtotal ?? (item.price ?? 0) * (item.quantity ?? 0)), 0)
+    : (cart?.total || 0);
   const [currentStep, setCurrentStep] = useState<Step>('fulfillment');
   const [fulfillment, setFulfillment] = useState<FulfillmentChoice>({
     type: 'pickup',
@@ -110,7 +113,11 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
         const order = snap.data() as { paymentStatus?: string; status?: string };
         if (order.paymentStatus === 'paid') {
           try {
-            await clearCart(user.uid);
+            if (isBuyNow) {
+              clearBuyNow();
+            } else if (user?.uid) {
+              await clearCart(user.uid);
+            }
           } catch (err) {
             console.error('[checkout] paid order cart clear failed:', err);
           }
@@ -130,7 +137,7 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
     );
 
     return () => unsub();
-  }, [clearCart, currentStep, orderId, user?.uid]);
+  }, [clearBuyNow, clearCart, currentStep, isBuyNow, orderId, user?.uid]);
 
   // Calculate totals.
   // Pricing is intentionally simple: Product Total + a flat Delivery Fee.
@@ -254,7 +261,10 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
       const ref = `DEMO-${Date.now()}`;
       setOrderId(ref);
       await new Promise((r) => setTimeout(r, 700));
-      try { if (user?.uid) await clearCart(user.uid); } catch { /* ignore */ }
+      try {
+        if (isBuyNow) clearBuyNow();
+        else if (user?.uid) await clearCart(user.uid);
+      } catch { /* ignore */ }
       setCurrentStep('complete');
       toast.success('(Demo) Payment confirmed — order simulated');
       setProcessing(false);
@@ -393,13 +403,16 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
             <motion.button
               whileHover={{ scale: 1.05, x: -2 }}
               whileTap={{ scale: 0.95 }}
-              onClick={onBack}
+              onClick={() => {
+                if (isBuyNow) clearBuyNow();
+                onBack();
+              }}
               className="p-2 sm:p-3 rounded-xl border-2 border-border hover:bg-muted transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-5 h-5" strokeWidth={2.5} />
             </motion.button>
             <div className="min-w-0">
-              <h1 className="text-xl sm:text-2xl font-bold">Checkout</h1>
+              <h1 className="text-xl sm:text-2xl font-bold">{isBuyNow ? 'Buy Now' : 'Checkout'}</h1>
               <p className="text-xs sm:text-sm text-muted-foreground">
                 {currentStep === 'complete'
                   ? 'Order Confirmed'

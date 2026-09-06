@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     root: __dirname,
+    // Env files live at the monorepo root (shared with Expo / native). Without
+    // this, Vite only reads apps/customer/.env* and Firebase never configures.
+    envDir: path.resolve(__dirname, '../..'),
     base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : '/',
     // The app shares Expo's EXPO_PUBLIC_* environment names across native
     // and web builds. Vite must explicitly expose that prefix to the client.

@@ -193,6 +193,7 @@ function RealAuthProvider({ children }: { children: ReactNode }) {
           toast.error('Failed to load your profile');
         }
       } else {
+        useCartStore.getState().resetLocalCart();
         setFirebaseUser(null);
         setUser(null);
       }
@@ -457,6 +458,9 @@ function RealAuthProvider({ children }: { children: ReactNode }) {
     try {
       const uid = auth.currentUser?.uid;
       const email = auth.currentUser?.email || '';
+      // Drop in-memory + persisted local cart so the next account on this
+      // device never briefly sees the previous customer's items.
+      useCartStore.getState().resetLocalCart();
       await firebaseSignOut(auth);
       clearSession();
       stopIdleAutoLock();

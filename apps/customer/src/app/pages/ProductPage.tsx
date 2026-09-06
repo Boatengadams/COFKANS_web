@@ -20,7 +20,7 @@ export default function ProductPage({ productId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [qty, setQty] = useState(1);
   const overrides = useProductOverrides();
-  const { addItem } = useCartStore();
+  const { addItem, startBuyNow } = useCartStore();
   const { user, firebaseUser, isAuthenticated } = useAuth();
 
   // Media gallery state
@@ -151,8 +151,24 @@ export default function ProductPage({ productId, onClose }: Props) {
   };
 
   const handleBuyNow = async () => {
-    await handleAddToCart();
-    // kick off checkout flow used elsewhere in app
+    if (!product) return;
+    if (!isAuthenticated) {
+      toast.error('Please sign in to buy');
+      return;
+    }
+    // Ephemeral checkout only — does not write to the persistent cart.
+    startBuyNow([{
+      productId: product.id || product.sku,
+      variantId: null,
+      sku: product.sku ?? product.id,
+      name: product.name,
+      image: (product.images && product.images[0] && product.images[0].url) || product.image || '',
+      price: price,
+      quantity: qty,
+      customization: null,
+      isAvailable: (stock ?? 0) > 0,
+      stockLevel: stock ?? 0,
+    }]);
     window.dispatchEvent(new CustomEvent('cofkans:checkout'));
   };
 

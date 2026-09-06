@@ -23,7 +23,7 @@ export function ProductDetailPage({ product, onClose }: ProductDetailPageProps) 
   const [activeIdx, setActiveIdx] = useState(0);
   const [qty, setQty] = useState(1);
   const [isWishlisted, setIsWishlisted] = useState(false);
-  const { addItem } = useCartStore();
+  const { addItem, startBuyNow } = useCartStore();
   const { user } = useFirebaseAuth();
 
   useEffect(() => {
@@ -79,6 +79,27 @@ export function ProductDetailPage({ product, onClose }: ProductDetailPageProps) 
     } catch {
       toast.error('Could not add to cart');
     }
+  };
+
+  const handleBuyNow = () => {
+    if (!user?.uid) {
+      toast.error('Please sign in to buy');
+      return;
+    }
+    startBuyNow([{
+      productId: displayProduct.id,
+      variantId: null,
+      sku: displayProduct.sku || displayProduct.id,
+      name: displayProduct.name,
+      image: displayProduct.image,
+      price: displayProduct.price,
+      quantity: qty,
+      customization: null,
+      isAvailable: true,
+      stockLevel: displayProduct.stock ?? 0,
+    }]);
+    onClose();
+    window.dispatchEvent(new CustomEvent('cofkans:checkout'));
   };
 
   return createPortal(
@@ -352,7 +373,10 @@ export function ProductDetailPage({ product, onClose }: ProductDetailPageProps) 
                           <ShoppingCart className="w-4 h-4" strokeWidth={2.4} />
                           Add to Cart
                         </button>
-                        <button className="w-full h-12 rounded-xl border-2 border-[#7C3AED] text-[#7C3AED] hover:bg-purple-50 font-bold text-sm flex items-center justify-center gap-2 transition-colors">
+                        <button
+                          onClick={handleBuyNow}
+                          className="w-full h-12 rounded-xl border-2 border-[#7C3AED] text-[#7C3AED] hover:bg-purple-50 font-bold text-sm flex items-center justify-center gap-2 transition-colors"
+                        >
                           Buy Now
                         </button>
                       </div>

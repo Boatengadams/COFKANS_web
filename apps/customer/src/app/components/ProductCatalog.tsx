@@ -150,7 +150,7 @@ export function ProductCatalog({ user, onRequireAuth, initialCategory = 'all' }:
     [products],
   );
   const { setHoveredProduct, addToViewedProducts } = useHover();
-  const { cart, addItem, updateQuantity, removeItem } = useCartStore();
+  const { cart, addItem, updateQuantity, removeItem, startBuyNow } = useCartStore();
   const cartItems = cart?.items || [];
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [searchTerm, setSearchTerm] = useState('');
@@ -310,6 +310,35 @@ export function ProductCatalog({ user, onRequireAuth, initialCategory = 'all' }:
       toast.error('Unable to add item to cart');
       return false;
     }
+  };
+
+  const handleBuyNow = (productId: string, quantity: number = 1) => {
+    if (!user) {
+      onRequireAuth();
+      return;
+    }
+
+    const product = products.find(p => p.id === productId);
+    if (!product) {
+      toast.error('Product not found');
+      return;
+    }
+
+    const price = showTradePrice && product.tradePrice ? product.tradePrice : product.price;
+    startBuyNow([{
+      productId: product.id,
+      variantId: null,
+      sku: product.sku,
+      name: product.name,
+      image: product.image,
+      price,
+      quantity,
+      customization: null,
+      isAvailable: (product.stock || 0) > 0,
+      stockLevel: product.stock || 0,
+    }]);
+    setQuickViewProduct(null);
+    window.dispatchEvent(new CustomEvent('cofkans:checkout'));
   };
 
   const handleRemoveFromCart = async (productId: string) => {
@@ -928,6 +957,7 @@ export function ProductCatalog({ user, onRequireAuth, initialCategory = 'all' }:
         product={quickViewProduct}
         onClose={() => setQuickViewProduct(null)}
         onAddToCart={(id, qty) => { handleAddToCart(id, qty); }}
+        onBuyNow={(id, qty) => { handleBuyNow(id, qty); }}
         onToggleWishlist={toggleWishlist}
         isWishlisted={quickViewProduct ? wishlist.includes(quickViewProduct.id) : false}
         showTradePrice={showTradePrice}

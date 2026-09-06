@@ -53,12 +53,42 @@ export const priceOverrideSchema = z.object({
   price: safeNumber.pipe(z.number().min(0).max(MAX_PRICE)),
 });
 
+/**
+ * Cart images in this app are either:
+ * - empty (no image),
+ * - site-relative product paths under /product-images/ or /images/ (after resolveImageUrl),
+ * - absolute http(s) URLs (legacy CDN / external).
+ * Reject protocol-relative, data:, javascript:, and arbitrary absolute paths.
+ */
+const cartImageSchema = z
+  .string()
+  .max(2048)
+  .refine(
+    (value) => {
+      if (value === '') return true;
+      if (
+        /^\/(product-images|images)\//.test(value) &&
+        !value.includes('://') &&
+        !/[\x00-\x1f]/.test(value)
+      ) {
+        return true;
+      }
+      try {
+        const u = new URL(value);
+        return u.protocol === 'http:' || u.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    },
+    { message: 'Invalid image path' },
+  );
+
 export const cartItemSchema = z.object({
   productId: z.string().min(1).max(128),
   variantId: z.string().max(128).nullable(),
   sku: z.string().regex(/^[A-Z0-9._+\-/ ]{1,64}$/i),
   name: sanitizedString(200),
-  image: z.string().url().max(2048).or(z.literal('')),
+  image: cartImageSchema,
   price: safeNumber.pipe(z.number().min(0).max(MAX_PRICE)),
   quantity: z.number().int().min(1).max(MAX_QTY),
   customization: z.unknown().nullable(),
