@@ -27,6 +27,7 @@ const expoPublicValues: Record<string, string | undefined> =
         FIREBASE_APP_ID: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
         FIREBASE_MEASUREMENT_ID: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
         FIREBASE_APPCHECK_SITE_KEY: process.env.EXPO_PUBLIC_FIREBASE_APPCHECK_SITE_KEY,
+        USE_FIREBASE_EMULATORS: process.env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS,
       };
 
 const vitePublicValues: Record<string, string | undefined> = {
@@ -39,6 +40,8 @@ const vitePublicValues: Record<string, string | undefined> = {
   FIREBASE_APP_ID: import.meta.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? import.meta.env.VITE_FIREBASE_APP_ID,
   FIREBASE_MEASUREMENT_ID: import.meta.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID ?? import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
   FIREBASE_APPCHECK_SITE_KEY: import.meta.env.EXPO_PUBLIC_FIREBASE_APPCHECK_SITE_KEY ?? import.meta.env.VITE_FIREBASE_APPCHECK_SITE_KEY,
+  USE_FIREBASE_EMULATORS:
+    import.meta.env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS ?? import.meta.env.VITE_USE_FIREBASE_EMULATORS,
 };
 
 export function getPublicEnv(name: string): string {

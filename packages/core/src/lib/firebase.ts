@@ -2,10 +2,23 @@
 // In demo mode all exports are inert stubs and no network calls fire.
 import { APP_ENV, DEMO_MODE, IS_WEB, getPublicEnv } from './demo-mode';
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, OAuthProvider, type Auth } from 'firebase/auth';
-import { getFirestore, initializeFirestore, disableNetwork, type Firestore, setLogLevel } from 'firebase/firestore';
+import {
+  connectAuthEmulator,
+  getAuth,
+  GoogleAuthProvider,
+  OAuthProvider,
+  type Auth,
+} from 'firebase/auth';
+import {
+  connectFirestoreEmulator,
+  getFirestore,
+  initializeFirestore,
+  disableNetwork,
+  type Firestore,
+  setLogLevel,
+} from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
-import { getFunctions, type Functions } from 'firebase/functions';
+import { connectFunctionsEmulator, getFunctions, type Functions } from 'firebase/functions';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 
@@ -116,15 +129,53 @@ export const db: Firestore = (() => {
 export const storage: FirebaseStorage = getStorage(app);
 export const functions: Functions = getFunctions(app, 'us-central1');
 
+/**
+ * Local Firebase Emulator Suite wiring.
+ *
+ * Hard gates (all required) so this can never activate in a real production build:
+ *   1. EXPO_PUBLIC_USE_FIREBASE_EMULATORS / VITE_USE_FIREBASE_EMULATORS === 'true'
+ *   2. Vite/Expo production build flag is false (import.meta.env.PROD / NODE_ENV)
+ *   3. Browser hostname is localhost / 127.0.0.1 only
+ *
+ * Default local `pnpm dev:customer` does NOT set the flag → live staging backend.
+ * Use `pnpm dev:customer:emulators` (or set the flag explicitly) for emulator demos.
+ */
+function shouldUseFirebaseEmulators(): boolean {
+  const flag = getPublicEnv('USE_FIREBASE_EMULATORS').trim().toLowerCase();
+  if (flag !== 'true' && flag !== '1') return false;
+
+  const isProdBuild =
+    (typeof import.meta !== 'undefined' && Boolean(import.meta.env?.PROD)) ||
+    (typeof process !== 'undefined' && process.env.NODE_ENV === 'production');
+  if (isProdBuild) return false;
+
+  if (!IS_WEB || typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1';
+}
+
+export const USING_FIREBASE_EMULATORS = shouldUseFirebaseEmulators();
+
+if (USING_FIREBASE_EMULATORS) {
+  // Ports match firebase.json → emulators.*
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+  console.info(
+    '[firebase] Connected to local Auth (9099), Firestore (8080), and Functions (5001) emulators.',
+  );
+}
+
 // Kill the Firestore network in environments where the backend is unreachable
 // (DEMO_MODE, or the Figma Make preview iframe). Avoids the 10-second
 // "Backend didn't respond" warning and the hang it implies.
+// Never disable when intentionally using the local emulator suite.
 const _isSandboxedPreview =
   IS_WEB && typeof window !== 'undefined' &&
   (window.location.hostname.endsWith('figma.site') ||
     window.location.hostname.endsWith('figma.com') ||
     window.self !== window.top);
-if (DEMO_MODE || !FIREBASE_CONFIGURED || _isSandboxedPreview) {
+if (!USING_FIREBASE_EMULATORS && (DEMO_MODE || !FIREBASE_CONFIGURED || _isSandboxedPreview)) {
   disableNetwork(db).catch(() => { /* ignore */ });
 }
 
