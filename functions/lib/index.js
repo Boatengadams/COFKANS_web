@@ -11,6 +11,7 @@
  *   setDeveloperClaim   grant / revoke `developer:true` on a target uid
  *   enrollTotp          generate a TOTP secret + otpauth URL for first-time setup
  *   verifyTotp          validate a 6-digit code against the stored secret
+ *   createLocalSale     walk-in POS: write localSales + decrement inventory/stock
  *
  * Bootstrap chicken-and-egg: the very first developer claim is granted by
  * running `firebase functions:shell` (or the gcloud CLI) once against your
@@ -50,7 +51,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.clearMustChangePassword = exports.resetStaffPassword = exports.permanentlyDeleteStaffAccount = exports.updateStaffAccount = exports.recordLoginAttempt = exports.forceSignOut = exports.setFeatureFlag = exports.auditLog = exports.verifyTotp = exports.enrollTotp = exports.setDeveloperClaim = exports.provisionStaffAccount = exports.paystackWebhook = exports.verifyPaystackPayment = exports.initializePaystackPayment = exports.resolveStockRequest = exports.updateStockTransfer = exports.createStockTransfer = exports.setUserRole = exports.updateOrderFulfillment = exports.createCheckoutOrder = void 0;
+exports.createLocalSale = exports.clearMustChangePassword = exports.resetStaffPassword = exports.permanentlyDeleteStaffAccount = exports.updateStaffAccount = exports.recordLoginAttempt = exports.forceSignOut = exports.setFeatureFlag = exports.auditLog = exports.verifyTotp = exports.enrollTotp = exports.setDeveloperClaim = exports.provisionStaffAccount = exports.paystackWebhook = exports.verifyPaystackPayment = exports.initializePaystackPayment = exports.resolveStockRequest = exports.updateStockTransfer = exports.createStockTransfer = exports.setUserRole = exports.updateOrderFulfillment = exports.createCheckoutOrder = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const params_1 = require("firebase-functions/params");
 const app_1 = require("firebase-admin/app");
@@ -485,7 +486,7 @@ exports.createCheckoutOrder = (0, https_1.onCall)({ region: "us-central1" }, asy
         const orderItems = items.map((item, index) => {
             const snap = productSnaps[index];
             if (!snap.exists) {
-                throw new https_1.HttpsError("failed-precondition", "A product in your cart is no longer available.");
+                throw new https_1.HttpsError("failed-precondition", "A product in your cart is no longer available.", { productId: item.productId, reason: "not-found" });
             }
             const product = snap.data();
             const price = cleanNumber(product.price, "product.price", { min: 0.01, max: 1000000 });
@@ -1409,4 +1410,193 @@ exports.clearMustChangePassword = (0, https_1.onCall)({ region: "us-central1" },
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
     }, { merge: true });
     return { ok: true };
+});
+// ---------------------------------------------------------------------------
+// createLocalSale — walk-in POS counter sale.
+// Server prices + atomic inventory / products.totalStock decrement.
+// ---------------------------------------------------------------------------
+const POS_PAYMENT_METHODS = new Set(["cash", "momo", "card", "transfer"]);
+const POS_VAT_RATE = 0.15;
+const POS_SALE_ROLES = [
+    "front_desk",
+    "branch_desk",
+    "branch_manager",
+    "manager",
+    "admin",
+    "warehouse",
+];
+exports.createLocalSale = (0, https_1.onCall)({ region: "us-central1" }, async (req) => {
+    const uid = requireStaff(req, POS_SALE_ROLES);
+    const role = typeof req.auth?.token?.role === "string" ? req.auth.token.role : "";
+    const isGlobal = req.auth?.token?.developer === true ||
+        role === "manager" ||
+        role === "admin";
+    const claimBranch = typeof req.auth?.token?.branchSlug === "string" ? req.auth.token.branchSlug.trim() : "";
+    const requestedBranch = optionalCleanString(req.data?.branchId, "branchId", 120);
+    const branchId = isGlobal ? (requestedBranch || claimBranch) : claimBranch;
+    if (!branchId) {
+        throw new https_1.HttpsError("failed-precondition", "Staff account is not assigned to a branch.");
+    }
+    if (!isGlobal && requestedBranch && requestedBranch !== claimBranch) {
+        throw new https_1.HttpsError("permission-denied", "You can only sell at your assigned branch.");
+    }
+    const items = cleanCheckoutItems(req.data?.items);
+    const paymentMethod = cleanString(req.data?.paymentMethod, "paymentMethod", 20).toLowerCase();
+    if (!POS_PAYMENT_METHODS.has(paymentMethod)) {
+        throw new https_1.HttpsError("invalid-argument", "Unsupported payment method.");
+    }
+    const discountPct = req.data?.discountPct == null
+        ? 0
+        : cleanNumber(req.data.discountPct, "discountPct", { min: 0, max: 100 });
+    const customerName = optionalCleanString(req.data?.customerName, "customerName", 120);
+    const customerPhone = optionalCleanString(req.data?.customerPhone, "customerPhone", 32);
+    const momoRef = optionalCleanString(req.data?.momoRef, "momoRef", 80);
+    const staffName = optionalCleanString(req.data?.staffName, "staffName", 120) ||
+        (typeof req.auth?.token?.name === "string" ? req.auth.token.name : "") ||
+        (typeof req.auth?.token?.email === "string" ? req.auth.token.email : "Staff");
+    // Aggregate duplicate product lines before stock checks.
+    const qtyByProduct = new Map();
+    for (const item of items) {
+        qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + item.quantity);
+    }
+    const productIds = [...qtyByProduct.keys()];
+    const db = (0, firestore_1.getFirestore)();
+    // Resolve inventory doc ids outside the transaction (composite query).
+    const inventoryRefs = [];
+    for (const productId of productIds) {
+        let snap = await db.collection("inventory")
+            .where("branchSlug", "==", branchId)
+            .where("productId", "==", productId)
+            .limit(1)
+            .get();
+        if (snap.empty) {
+            snap = await db.collection("inventory")
+                .where("branchId", "==", branchId)
+                .where("productId", "==", productId)
+                .limit(1)
+                .get();
+        }
+        if (snap.empty) {
+            throw new https_1.HttpsError("failed-precondition", `No inventory row for product at this branch.`, { productId, branchId, reason: "inventory_missing" });
+        }
+        inventoryRefs.push({ productId, ref: snap.docs[0].ref });
+    }
+    const saleRef = db.collection("localSales").doc();
+    const now = firestore_1.FieldValue.serverTimestamp();
+    const prefix = branchId.slice(0, 3).toUpperCase();
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    const receiptNumber = `${prefix}-${ymd}-${String(Date.now()).slice(-4)}`;
+    const result = await db.runTransaction(async (tx) => {
+        const productSnaps = await Promise.all(productIds.map((id) => tx.get(db.doc(`products/${id}`))));
+        const inventorySnaps = await Promise.all(inventoryRefs.map((row) => tx.get(row.ref)));
+        let subtotal = 0;
+        const saleItems = [];
+        for (let i = 0; i < productIds.length; i++) {
+            const productId = productIds[i];
+            const qty = qtyByProduct.get(productId) ?? 0;
+            const productSnap = productSnaps[i];
+            const invSnap = inventorySnaps[i];
+            if (!productSnap.exists) {
+                throw new https_1.HttpsError("failed-precondition", "A product in the cart is no longer available.", {
+                    productId,
+                    reason: "product_missing",
+                });
+            }
+            if (!invSnap.exists) {
+                throw new https_1.HttpsError("failed-precondition", "Inventory row disappeared during checkout.", {
+                    productId,
+                    reason: "inventory_missing",
+                });
+            }
+            const product = productSnap.data();
+            const inv = invSnap.data();
+            const unitPrice = cleanNumber(product.price, "product.price", { min: 0.01, max: 1000000 });
+            const branchQty = Number(inv.quantity ?? inv.qty ?? inv.stock ?? inv.current ?? 0);
+            const companyStock = typeof product.totalStock === "number" ? product.totalStock : 0;
+            if (branchQty < qty) {
+                throw new https_1.HttpsError("failed-precondition", `${product.name ?? "Product"} has only ${branchQty} in stock at this branch.`, { productId, available: branchQty, requested: qty, reason: "insufficient_stock" });
+            }
+            if (companyStock < qty) {
+                throw new https_1.HttpsError("failed-precondition", `${product.name ?? "Product"} company stock is insufficient.`, { productId, available: companyStock, requested: qty, reason: "insufficient_total_stock" });
+            }
+            const lineSubtotal = Number((unitPrice * qty).toFixed(2));
+            subtotal = Number((subtotal + lineSubtotal).toFixed(2));
+            saleItems.push({
+                productId,
+                sku: product.sku ?? "",
+                name: product.name ?? "Product",
+                unitPrice,
+                quantity: qty,
+                lineTotal: lineSubtotal,
+                image: product.image || product.images?.find((img) => img?.url)?.url || "",
+            });
+            const nextBranchQty = branchQty - qty;
+            const threshold = Number(inv.lowStockThreshold ?? inv.reorderLevel ?? inv.minimum ?? 0);
+            tx.update(inventoryRefs[i].ref, {
+                quantity: nextBranchQty,
+                qty: nextBranchQty,
+                soldThisMonth: firestore_1.FieldValue.increment(qty),
+                status: nextBranchQty <= 0 ? "out" : nextBranchQty <= threshold ? "low" : "ok",
+                updatedAt: now,
+            });
+            const nextTotal = companyStock - qty;
+            tx.update(productSnap.ref, {
+                totalStock: nextTotal,
+                isAvailable: nextTotal > 0,
+                status: nextTotal > 0 ? (product.status === "draft" || product.status === "archived" ? product.status : "active") : "outOfStock",
+                purchaseCount: firestore_1.FieldValue.increment(qty),
+                updatedAt: now,
+            });
+        }
+        const discountAmount = Number((subtotal * (discountPct / 100)).toFixed(2));
+        const taxable = Number((subtotal - discountAmount).toFixed(2));
+        const vat = Number((taxable * POS_VAT_RATE).toFixed(2));
+        const total = Number((taxable + vat).toFixed(2));
+        const amountPaidRaw = req.data?.amountPaid;
+        const amountPaid = amountPaidRaw == null
+            ? total
+            : cleanNumber(amountPaidRaw, "amountPaid", { min: 0, max: 10000000 });
+        if (paymentMethod === "cash" && amountPaid < total) {
+            throw new https_1.HttpsError("failed-precondition", "Cash received is less than the total due.");
+        }
+        const change = paymentMethod === "cash" ? Number(Math.max(0, amountPaid - total).toFixed(2)) : 0;
+        tx.set(saleRef, {
+            id: saleRef.id,
+            receiptNumber,
+            branchId,
+            branch: branchId,
+            staffUid: uid,
+            staffName,
+            channel: "walk-in",
+            paymentMethod,
+            paymentStatus: "paid",
+            momoRef: momoRef ?? null,
+            customerName: customerName ?? null,
+            customerPhone: customerPhone ?? null,
+            items: saleItems,
+            itemCount: saleItems.reduce((s, it) => s + Number(it.quantity ?? 0), 0),
+            subtotal,
+            discountPct,
+            discountAmount,
+            vat,
+            taxAmount: vat,
+            total,
+            amountPaid: paymentMethod === "cash" ? amountPaid : total,
+            change,
+            currency: "GHS",
+            createdAt: now,
+            updatedAt: now,
+            serverCreatedAt: now,
+        });
+        return { saleId: saleRef.id, receiptNumber, subtotal, discountAmount, vat, total, amountPaid: paymentMethod === "cash" ? amountPaid : total, change };
+    });
+    await db.collection("auditLogs").add({
+        action: "local_sale_created",
+        actorUid: uid,
+        targetId: result.saleId,
+        meta: { branchId, receiptNumber: result.receiptNumber, total: result.total, itemCount: items.length },
+        at: firestore_1.FieldValue.serverTimestamp(),
+    });
+    return result;
 });

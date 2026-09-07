@@ -1,15 +1,14 @@
 /**
  * Branch POS sale helpers.
  *
- * Minimal local-only implementation: the receipt counter generates a
- * branch-scoped, time-sortable number, and `recordLocalSale` writes the sale
- * to the `localSales` Firestore collection. When offline, the caller wraps
- * the write in `tryOnlineThenQueue` from `./offline-queue`.
+ * `recordLocalSale` delegates to the `createLocalSale` Cloud Function so
+ * inventory + products.totalStock decrement atomically with the receipt.
+ * Prefer calling createLocalSale from staff backend for typed errors.
  */
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { db } from './firebase';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from './firebase';
 
-export type PaymentMethod = 'cash' | 'momo' | 'card' | 'credit';
+export type PaymentMethod = 'cash' | 'momo' | 'card' | 'credit' | 'transfer';
 
 export interface LocalSaleItem {
   productId: string;
@@ -27,6 +26,11 @@ export interface LocalSalePayload {
   items: LocalSaleItem[];
   paymentMethod: PaymentMethod;
   receiptNumber: string;
+  discountPct?: number;
+  amountPaid?: number;
+  customerName?: string;
+  customerPhone?: string;
+  momoRef?: string;
 }
 
 /** Branch-scoped receipt number: BRANCHPREFIX-YYYYMMDD-####. */
@@ -37,12 +41,19 @@ export function generateReceiptNumber(branchSlug: string, counter: number): stri
   return `${prefix}-${ymd}-${String(counter).padStart(4, '0')}`;
 }
 
-export async function recordLocalSale(payload: LocalSalePayload): Promise<void> {
-  const total = payload.items.reduce((s, i) => s + i.lineTotal, 0);
-  await addDoc(collection(db, 'localSales'), {
-    ...payload,
-    total,
-    serverCreatedAt: serverTimestamp(),
-    createdAt: serverTimestamp(),
+export async function recordLocalSale(payload: LocalSalePayload): Promise<{ saleId: string; receiptNumber: string; total: number }> {
+  const method = payload.paymentMethod === 'credit' ? 'transfer' : payload.paymentMethod;
+  const callable = httpsCallable(functions, 'createLocalSale');
+  const result = await callable({
+    items: payload.items.map(i => ({ productId: i.productId, quantity: i.quantity })),
+    paymentMethod: method === 'momo' ? 'momo' : method,
+    amountPaid: payload.amountPaid,
+    customerName: payload.customerName,
+    customerPhone: payload.customerPhone,
+    discountPct: payload.discountPct,
+    momoRef: payload.momoRef,
+    staffName: payload.staffName,
+    branchId: payload.branch,
   });
+  return result.data as { saleId: string; receiptNumber: string; total: number };
 }
