@@ -9,7 +9,7 @@
     "dev": "vite --host 0.0.0.0",
     "dev:customer": "./node_modules/.bin/vite --host 0.0.0.0 --config apps/customer/vite.config.ts",
     "dev:customer:emulators": "EXPO_PUBLIC_USE_FIREBASE_EMULATORS=true ./node_modules/.bin/vite --host 0.0.0.0 --config apps/customer/vite.config.ts",
-    "emulators": "mkdir -p emulator-data && firebase emulators:start --only auth,firestore,functions --project cofkans-staging --import=./emulator-data --export-on-exit=./emulator-data",
+    "emulators": "mkdir -p emulator-data && firebase emulators:start --only auth,firestore,functions,storage,database --project cofkans-staging --import=./emulator-data --export-on-exit=./emulator-data",
     "emulators:seed": "node scripts/seed-emulator.mjs",
     "emulators:verify": "node scripts/verify-emulator-checkout.mjs",
     "emulators:stop": "node scripts/stop-emulators.mjs",

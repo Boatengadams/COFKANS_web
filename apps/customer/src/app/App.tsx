@@ -600,7 +600,6 @@ function AppContent() {
           transform: headerVisible ? 'translateY(0)' : 'translateY(-110%)',
           opacity: headerVisible ? 1 : 0,
           pointerEvents: headerVisible ? 'auto' : 'none',
-          willChange: 'transform, opacity',
           transition: 'transform 350ms cubic-bezier(0.19, 1, 0.22, 1), opacity 250ms ease',
         }}
         className={`fixed top-0 left-0 right-0 z-50 ${
@@ -854,7 +853,7 @@ function AppContent() {
               scale: currentSlide === index ? 1 : 1.05,
             }}
             transition={{ duration: 1.6, ease: [0.19, 1, 0.22, 1] }}
-            className="absolute inset-0 will-change-transform"
+            className="absolute inset-0"
             style={{
               transform: currentSlide === index
                 ? 'translateY(calc(var(--scroll-y, 0px) * 0.35))'
@@ -885,7 +884,6 @@ function AppContent() {
           style={{
             transform: 'translateY(calc(var(--scroll-y, 0px) * 0.2))',
             opacity: 'calc(1 - clamp(0, calc(var(--scroll-y, 0px) / 500), 1))',
-            willChange: 'transform, opacity',
           }}
         >
           <div className="max-w-6xl mx-auto text-center px-2">

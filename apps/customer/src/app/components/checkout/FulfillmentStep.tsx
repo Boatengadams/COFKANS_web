@@ -43,6 +43,7 @@ export function FulfillmentStep({ value, onChange, onContinue }: Props) {
   const firstSlug = branches[0]?.slug;
   const branchesKey = branches.map(b => b.slug).join(',');
   const hasSelected = !!value.branchSlug && branches.some(b => b.slug === value.branchSlug);
+  const prevLocationStatus = useRef(locationStatus);
 
   // If the selected branch is missing or removed, default to the first one
   // (nearest when location is granted; otherwise catalog order).
@@ -51,11 +52,16 @@ export function FulfillmentStep({ value, onChange, onContinue }: Props) {
     onChangeRef.current({ ...valueRef.current, branchSlug: firstSlug });
   }, [firstSlug, hasSelected, branchesKey]);
 
-  // When the customer grants location, prefer the nearest branch.
+  // Only auto-pick nearest once, when location permission is newly granted —
+  // do not re-force firstSlug on later list reorders (that made manual selection
+  // feel broken).
   useEffect(() => {
-    if (locationStatus !== 'granted' || !firstSlug) return;
+    const justGranted =
+      locationStatus === 'granted' && prevLocationStatus.current !== 'granted';
+    prevLocationStatus.current = locationStatus;
+    if (!justGranted || !firstSlug) return;
     onChangeRef.current({ ...valueRef.current, branchSlug: firstSlug });
-  }, [locationStatus, firstSlug, branchesKey]);
+  }, [locationStatus, firstSlug]);
 
   // Default the scheduled date the first time the user lands here / switches type.
   useEffect(() => {
@@ -182,7 +188,7 @@ export function FulfillmentStep({ value, onChange, onContinue }: Props) {
           </p>
         )}
         <div className="relative">
-          <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+          <MapPin className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
           <select
             value={value.branchSlug}
             onChange={(e) => onChange({ ...value, branchSlug: e.target.value })}

@@ -17,7 +17,7 @@ import {
   type Firestore,
   setLogLevel,
 } from 'firebase/firestore';
-import { getStorage, type FirebaseStorage } from 'firebase/storage';
+import { connectStorageEmulator, getStorage, type FirebaseStorage } from 'firebase/storage';
 import { connectFunctionsEmulator, getFunctions, type Functions } from 'firebase/functions';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
@@ -161,8 +161,9 @@ if (USING_FIREBASE_EMULATORS) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+  connectStorageEmulator(storage, '127.0.0.1', 9199);
   console.info(
-    '[firebase] Connected to local Auth (9099), Firestore (8080), and Functions (5001) emulators.',
+    '[firebase] Connected to local Auth (9099), Firestore (8080), Functions (5001), Storage (9199) emulators.',
   );
 }
 

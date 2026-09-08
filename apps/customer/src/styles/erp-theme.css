@@ -181,9 +181,9 @@
     transform 0.4s var(--ease-out-soft),
     box-shadow 0.4s var(--ease-out-soft),
     border-color 0.4s var(--ease-out-soft);
-  will-change: transform;
 }
 .erp-theme .erp-card-hover:hover {
+  will-change: transform;
   transform: translateY(-3px);
   box-shadow: var(--erp-shadow-lg);
   border-color: color-mix(in srgb, var(--primary) 30%, var(--erp-hairline));

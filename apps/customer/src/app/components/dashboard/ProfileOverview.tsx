@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { User, Mail, Calendar, Shield, CheckCircle, XCircle, Crown } from 'lucide-react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { useFirebaseAuth } from '../../contexts/FirebaseAuthContext';
 import { db } from '@/lib/firebase';
 import { format } from 'date-fns';
@@ -31,10 +31,15 @@ export function ProfileOverview() {
     let cancelled = false;
     (async () => {
       try {
-        const [ordersSnap, wishlistSnap] = await Promise.all([
+        // Wishlist lives on customerActivity/{uid}.wishlistItems — there is no
+        // top-level `wishlists` collection (querying it hits permission-denied).
+        const [ordersSnap, activitySnap] = await Promise.all([
           getDocs(query(collection(db, 'orders'), where('userId', '==', user.uid))),
-          getDocs(query(collection(db, 'wishlists'), where('userId', '==', user.uid))),
+          getDoc(doc(db, 'customerActivity', user.uid)),
         ]);
+        const wishlistItems = activitySnap.exists()
+          ? (activitySnap.data()?.wishlistItems as string[] | undefined)
+          : undefined;
         const totalSpent = ordersSnap.docs.reduce((sum, d) => {
           const o = d.data();
           // Only count actually-paid orders so cancelled / pending don't inflate.
@@ -46,7 +51,7 @@ export function ProfileOverview() {
         if (cancelled) return;
         setStats({
           totalOrders: ordersSnap.size,
-          wishlistCount: wishlistSnap.size,
+          wishlistCount: Array.isArray(wishlistItems) ? wishlistItems.length : 0,
           totalSpent,
           loading: false,
         });

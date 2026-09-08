@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { useCartStore } from '@/stores/cart-store';
 import { useFirebaseAuth } from '../contexts/FirebaseAuthContext';
-import { collection, addDoc, serverTimestamp, doc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { openPaystackPopup, validatePaystackConfig, preloadPaystackScript, isPaystackReady } from '@/lib/use-paystack';
 import { createCheckoutOrder, initializePaystackPayment, verifyPaystackPayment } from '@/lib/paystack-service';
@@ -31,6 +31,7 @@ import { FulfillmentStep, type FulfillmentChoice } from '../components/checkout/
 import { useBranches } from '@/lib/branches';
 import { GHANA_REGION_NAMES, getCitiesForRegion } from '@/lib/ghana-address-data';
 import { PhoneInputGH } from '../components/common/PhoneInputGH';
+import { CartService } from '@/lib/firestore-service';
 import type { OrderItem } from '@/lib/firestore-schema';
 
 interface CheckoutPageProps {
@@ -53,7 +54,7 @@ interface ShippingAddress {
 
 export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
   const { user } = useFirebaseAuth();
-  const { cart, clearCart, buyNowItems, clearBuyNow } = useCartStore();
+  const { cart, clearCart, buyNowItems, clearBuyNow, removeLocalItem, startBuyNow } = useCartStore();
   const branches = useBranches(true);
   const isBuyNow = Array.isArray(buyNowItems) && buyNowItems.length > 0;
   const items = isBuyNow ? buyNowItems! : (cart?.items || []);
@@ -71,7 +72,8 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
   const [confirmingReference, setConfirmingReference] = useState<string | null>(null);
   const [confirmingError, setConfirmingError] = useState<string | null>(null);
 
-  // Shipping form state
+  // Shipping / contact form state. Phone must be present for both pickup and
+  // delivery — createCheckoutOrder rejects empty phone with a 400.
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
     fullName: user?.displayName || '',
     phone: user?.phoneNumber || '',
@@ -82,6 +84,17 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
     postalCode: '',
     additionalInfo: '',
   });
+
+  // Auth can resolve after first paint — fill blanks once the profile arrives.
+  useEffect(() => {
+    if (!user) return;
+    setShippingAddress((prev) => ({
+      ...prev,
+      fullName: prev.fullName || user.displayName || '',
+      phone: prev.phone || user.phoneNumber || '',
+      email: prev.email || user.email || '',
+    }));
+  }, [user?.uid, user?.displayName, user?.phoneNumber, user?.email]);
 
   // Payment method state — Paystack only. We dispatch on confirmed payment;
   // cash on delivery is intentionally not offered.
@@ -155,30 +168,48 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
     [shippingAddress.region],
   );
 
+  const normalizeGhPhone = (phone: string): string => {
+    let digits = phone.replace(/\D/g, '');
+    if (digits.startsWith('233')) digits = digits.slice(3);
+    digits = digits.replace(/^0+/, '');
+    return digits.length === 9 ? `+233${digits}` : phone.replace(/\s+/g, '').trim();
+  };
+
+  const isValidGhPhone = (phone: string): boolean =>
+    /^\+233[2-5]\d{8}$/.test(normalizeGhPhone(phone));
+
   const validateShippingForm = (): boolean => {
     if (!shippingAddress.fullName.trim()) {
       toast.error('Please enter your full name');
       return false;
     }
-    if (!shippingAddress.phone.trim()) {
+    const phone = normalizeGhPhone(shippingAddress.phone);
+    if (!phone) {
       toast.error('Please enter your phone number');
       return false;
+    }
+    if (!isValidGhPhone(phone)) {
+      toast.error('Enter a valid Ghana mobile number (9 digits after +233)');
+      return false;
+    }
+    // Keep the form state in E.164 so Paystack / the server see the same value.
+    if (phone !== shippingAddress.phone) {
+      setShippingAddress((prev) => ({ ...prev, phone }));
     }
     if (!shippingAddress.email.trim()) {
       toast.error('Please enter your email');
       return false;
     }
-    if (!shippingAddress.street.trim()) {
-      toast.error('Please enter your street address');
-      return false;
-    }
-    if (!shippingAddress.city.trim()) {
-      toast.error('Please select a city / district');
-      return false;
-    }
-    if (!shippingAddress.street.trim()) {
-      toast.error('Please enter your specific street / location');
-      return false;
+    // Pickup uses the branch address; only delivery needs a customer street/city.
+    if (fulfillment.type === 'delivery') {
+      if (!shippingAddress.city.trim()) {
+        toast.error('Please select a city / district');
+        return false;
+      }
+      if (!shippingAddress.street.trim()) {
+        toast.error('Please enter your specific street / location');
+        return false;
+      }
     }
     return true;
   };
@@ -200,13 +231,67 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
     // Server-authoritative order creation via callable function.
     // The client only sends product ids, quantities, fulfillment and contact info.
     if (!user) return null;
+    const phone = normalizeGhPhone(shippingAddress.phone);
+    if (!isValidGhPhone(phone)) {
+      toast.error('Enter a valid Ghana mobile number before paying');
+      setCurrentStep('shipping');
+      return null;
+    }
+
+    const removeStaleCartItem = async (productId: string, variantId: string | null) => {
+      if (isBuyNow) {
+        const remaining = (buyNowItems || []).filter(
+          (item) => !(item.productId === productId && (item.variantId || null) === variantId),
+        );
+        if (remaining.length) startBuyNow(remaining);
+        else clearBuyNow();
+      } else {
+        removeLocalItem(productId, variantId);
+        if (user.uid && !DEMO_MODE) {
+          try {
+            await CartService.removeItem(user.uid, productId, variantId);
+          } catch (err) {
+            console.warn('[checkout] failed to sync stale item removal', err);
+          }
+        }
+      }
+    };
+
     try {
+      // Emulator restarts (and catalog edits) can leave localStorage carts pointing
+      // at product IDs that no longer exist. Prune those before calling the server
+      // so the user sees a clear message instead of a raw [400] FirebaseError.
+      const missing: Array<{ productId: string; variantId: string | null; name?: string }> = [];
+      await Promise.all(
+        items.map(async (it) => {
+          const snap = await getDoc(doc(db, 'products', it.productId));
+          if (!snap.exists()) {
+            missing.push({
+              productId: it.productId,
+              variantId: it.variantId || null,
+              name: it.name,
+            });
+          }
+        }),
+      );
+      if (missing.length) {
+        for (const m of missing) {
+          await removeStaleCartItem(m.productId, m.variantId);
+        }
+        toast.error(
+          missing.length === 1
+            ? `"${missing[0].name || 'This item'}" is no longer available. It was removed from your cart — please re-add it.`
+            : `${missing.length} items are no longer available and were removed from your cart. Please re-add them.`,
+        );
+        return null;
+      }
+
       const payload = {
         items: items.map((it) => ({ productId: it.productId, variantId: it.variantId || null, quantity: it.quantity })),
         shippingAddress: {
-          fullName: shippingAddress.fullName,
-          phone: shippingAddress.phone,
-          email: shippingAddress.email,
+          fullName: shippingAddress.fullName.trim(),
+          phone,
+          email: shippingAddress.email.trim(),
           region: shippingAddress.region,
           city: shippingAddress.city,
           street: shippingAddress.street,
@@ -244,9 +329,37 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
       const result = await createCheckoutOrder(payload);
       // result includes orderId
       return result.orderId;
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Failed to create order (server):', error);
-      toast.error('Failed to create order. Please try again.');
+      const message =
+        error && typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string'
+          ? (error as { message: string }).message
+          : 'Failed to create order. Please try again.';
+      const details =
+        error && typeof error === 'object' && 'details' in error
+          ? (error as { details?: { productId?: string; reason?: string } }).details
+          : undefined;
+
+      if (/no longer available/i.test(message) || details?.reason === 'not-found') {
+        const productId = details?.productId;
+        const stale = productId
+          ? items.find((it) => it.productId === productId)
+          : items.length === 1
+            ? items[0]
+            : undefined;
+        if (stale) {
+          await removeStaleCartItem(stale.productId, stale.variantId || null);
+          toast.error(
+            `"${stale.name || 'This item'}" is no longer available. It was removed from your cart — please re-add it.`,
+          );
+          return null;
+        }
+        toast.error('An item in your cart is no longer available. Please re-add it and try again.');
+        return null;
+      }
+
+      toast.error(message);
+      if (/phone/i.test(message)) setCurrentStep('shipping');
       return null;
     }
   };
@@ -336,9 +449,11 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
 
   const steps = [
     { id: 'fulfillment' as const, label: 'Fulfillment', icon: Truck },
-    ...(fulfillment.type === 'delivery'
-      ? [{ id: 'shipping' as const, label: 'Address', icon: MapPin }]
-      : []),
+    {
+      id: 'shipping' as const,
+      label: fulfillment.type === 'pickup' ? 'Contact' : 'Address',
+      icon: fulfillment.type === 'pickup' ? Phone : MapPin,
+    },
     { id: 'payment' as const, label: 'Payment', icon: CreditCard },
     { id: 'review' as const, label: 'Review', icon: Package },
   ];
@@ -353,8 +468,8 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
       if (fulfillment.type === 'delivery') d.setDate(d.getDate() + 1);
       setFulfillment(f => ({ ...f, scheduledDate: d.toISOString().slice(0, 10) }));
     }
-    // For pickup we pre-fill shipping with branch contact so downstream logic
-    // (which still references shippingAddress) keeps working.
+    // Pickup still needs name + phone for the order / Paystack. Prefill the
+    // address fields from the branch, then collect contact on the next step.
     if (fulfillment.type === 'pickup') {
       const b = branches.find(branch => branch.slug === fulfillment.branchSlug);
       if (b) {
@@ -366,10 +481,8 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
           postalCode: prev.postalCode || '00000',
         }));
       }
-      setCurrentStep('payment');
-    } else {
-      setCurrentStep('shipping');
     }
+    setCurrentStep('shipping');
   };
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
@@ -506,7 +619,15 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
               exit={{ opacity: 0, x: -20 }}
             >
               <div className="bg-card border-2 border-border rounded-2xl p-4 sm:p-8">
-                <h2 className="text-xl font-bold mb-6">Shipping Address</h2>
+                <h2 className="text-xl font-bold mb-2">
+                  {fulfillment.type === 'pickup' ? 'Contact Details' : 'Shipping Address'}
+                </h2>
+                {fulfillment.type === 'pickup' && (
+                  <p className="text-sm text-muted-foreground mb-6">
+                    We need your name and phone for pickup notifications and Paystack.
+                  </p>
+                )}
+                {fulfillment.type === 'delivery' && <div className="mb-6" />}
 
                 <form onSubmit={handleShippingSubmit} className="space-y-4">
                   <div className="grid md:grid-cols-2 gap-4">
@@ -550,72 +671,85 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
                     <p className="text-[11px] text-muted-foreground mt-1">Order confirmation will be sent here.</p>
                   </div>
 
-                  {/* Region — first, drives city list */}
-                  <div>
-                    <label className="block text-sm font-bold mb-2">Region *</label>
-                    <div className="relative">
-                      <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                      <select
-                        value={shippingAddress.region}
-                        onChange={(e) => setShippingAddress(prev => ({ ...prev, region: e.target.value, city: '' }))}
-                        className="w-full pl-10 pr-10 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary cursor-pointer appearance-none"
-                        required
-                      >
-                        <option value="">— Select region —</option>
-                        {GHANA_REGION_NAMES.map(r => (
-                          <option key={r} value={r}>{r} Region</option>
-                        ))}
-                      </select>
+                  {fulfillment.type === 'delivery' && (
+                    <>
+                      {/* Region — first, drives city list */}
+                      <div>
+                        <label className="block text-sm font-bold mb-2">Region *</label>
+                        <div className="relative">
+                          <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+                          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                          <select
+                            value={shippingAddress.region}
+                            onChange={(e) => setShippingAddress(prev => ({ ...prev, region: e.target.value, city: '' }))}
+                            className="w-full pl-10 pr-10 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary cursor-pointer appearance-none"
+                            required
+                          >
+                            <option value="">— Select region —</option>
+                            {GHANA_REGION_NAMES.map(r => (
+                              <option key={r} value={r}>{r} Region</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* City / District — populated by region selection */}
+                      <div>
+                        <label className="block text-sm font-bold mb-2">City / District *</label>
+                        <div className="relative">
+                          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                          <select
+                            value={shippingAddress.city}
+                            onChange={(e) => setShippingAddress(prev => ({ ...prev, city: e.target.value }))}
+                            disabled={!shippingAddress.region}
+                            className="w-full px-4 pr-10 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary cursor-pointer appearance-none disabled:opacity-50 disabled:cursor-not-allowed"
+                            required
+                          >
+                            <option value="">— Select city / district —</option>
+                            {regionCities.map(c => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Specific location — typed by user */}
+                      <div>
+                        <label className="block text-sm font-bold mb-2">Street / Specific Location *</label>
+                        <input
+                          type="text"
+                          value={shippingAddress.street}
+                          onChange={(e) => handleInputChange('street', e.target.value)}
+                          className="w-full px-4 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary"
+                          placeholder="e.g. 5 Nkrumah Ave, near Total filling station"
+                          required
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">Describe your exact location or nearest landmark.</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-bold mb-2">
+                          Delivery Notes (Optional)
+                        </label>
+                        <textarea
+                          value={shippingAddress.additionalInfo}
+                          onChange={(e) => handleInputChange('additionalInfo', e.target.value)}
+                          className="w-full px-4 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary resize-none"
+                          rows={2}
+                          placeholder="Gate colour, floor number, landmark, etc."
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {fulfillment.type === 'pickup' && shippingAddress.street && (
+                    <div className="rounded-xl border-2 border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                      <span className="font-bold text-foreground">Pickup branch: </span>
+                      {shippingAddress.street}
+                      {shippingAddress.city ? `, ${shippingAddress.city}` : ''}
+                      {shippingAddress.region ? `, ${shippingAddress.region}` : ''}
                     </div>
-                  </div>
-
-                  {/* City / District — populated by region selection */}
-                  <div>
-                    <label className="block text-sm font-bold mb-2">City / District *</label>
-                    <div className="relative">
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                      <select
-                        value={shippingAddress.city}
-                        onChange={(e) => setShippingAddress(prev => ({ ...prev, city: e.target.value }))}
-                        disabled={!shippingAddress.region}
-                        className="w-full px-4 pr-10 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary cursor-pointer appearance-none disabled:opacity-50 disabled:cursor-not-allowed"
-                        required
-                      >
-                        <option value="">— Select city / district —</option>
-                        {regionCities.map(c => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Specific location — typed by user */}
-                  <div>
-                    <label className="block text-sm font-bold mb-2">Street / Specific Location *</label>
-                    <input
-                      type="text"
-                      value={shippingAddress.street}
-                      onChange={(e) => handleInputChange('street', e.target.value)}
-                      className="w-full px-4 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary"
-                      placeholder="e.g. 5 Nkrumah Ave, near Total filling station"
-                      required
-                    />
-                    <p className="text-[11px] text-muted-foreground mt-1">Describe your exact location or nearest landmark.</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold mb-2">
-                      Delivery Notes (Optional)
-                    </label>
-                    <textarea
-                      value={shippingAddress.additionalInfo}
-                      onChange={(e) => handleInputChange('additionalInfo', e.target.value)}
-                      className="w-full px-4 py-3 bg-background border-2 border-border rounded-xl focus:outline-none focus:border-primary resize-none"
-                      rows={2}
-                      placeholder="Gate colour, floor number, landmark, etc."
-                    />
-                  </div>
+                  )}
 
                   <motion.button
                     whileHover={{ scale: 1.02 }}
@@ -677,7 +811,7 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
                 <div className="flex gap-3 pt-2">
                   <motion.button
                     whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                    onClick={() => setCurrentStep(fulfillment.type === 'delivery' ? 'shipping' : 'fulfillment')}
+                    onClick={() => setCurrentStep('shipping')}
                     className="flex-1 py-3.5 bg-muted text-foreground rounded-xl font-bold"
                   >
                     Back
@@ -747,7 +881,9 @@ export function CheckoutPage({ onBack, onComplete }: CheckoutPageProps) {
                 {/* Shipping Address Review */}
                 <div className="bg-card border-2 border-border rounded-2xl p-4 sm:p-8">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-bold">Shipping Address</h3>
+                    <h3 className="font-bold">
+                      {fulfillment.type === 'pickup' ? 'Contact & Pickup' : 'Shipping Address'}
+                    </h3>
                     <button
                       onClick={() => setCurrentStep('shipping')}
                       className="text-sm text-primary hover:underline"
