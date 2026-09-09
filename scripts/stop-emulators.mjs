@@ -6,7 +6,7 @@
  */
 import { execSync } from 'node:child_process';
 
-const PORTS = [4000, 4400, 4500, 5001, 8080, 8443, 8455, 9099, 9150];
+const PORTS = [4000, 4400, 4500, 5001, 8080, 8443, 8455, 9000, 9099, 9150, 9199];
 
 function pidsOnPort(port) {
   try {
