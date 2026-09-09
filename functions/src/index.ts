@@ -11,6 +11,7 @@
  *   enrollTotp          generate a TOTP secret + otpauth URL for first-time setup
  *   verifyTotp          validate a 6-digit code against the stored secret
  *   createLocalSale     walk-in POS: write localSales + decrement inventory/stock
+ *   setBranchInventoryQuantities  staff stock receive / set per-branch qty
  *
  * Bootstrap chicken-and-egg: the very first developer claim is granted by
  * running `firebase functions:shell` (or the gcloud CLI) once against your
@@ -1852,5 +1853,209 @@ export const createLocalSale = onCall(
     });
 
     return result;
+  }
+);
+
+// ---------------------------------------------------------------------------
+// setBranchInventoryQuantities — set absolute branch qty for a catalogue product.
+// Used for stock arrivals / corrections. Inventory remains CF-only (rules deny
+// client writes). Developer always allowed; GM / BM / front desk allowed when
+// featureFlags/global.staffStockUpdates is not false. BM/FD scoped to own branch.
+// ---------------------------------------------------------------------------
+const STOCK_UPDATE_ROLES = [
+  "front_desk",
+  "branch_desk",
+  "branch_manager",
+  "manager",
+  "admin",
+  "warehouse",
+];
+
+export const setBranchInventoryQuantities = onCall(
+  {region: "us-central1"},
+  async (req) => {
+    const uid = requireStaff(req, STOCK_UPDATE_ROLES);
+    const role = typeof req.auth?.token?.role === "string" ? req.auth.token.role : "";
+    const isDeveloper = req.auth?.token?.developer === true || role === "developer";
+    const isGlobal =
+      isDeveloper ||
+      role === "manager" ||
+      role === "admin";
+    const claimBranch =
+      typeof req.auth?.token?.branchSlug === "string" ? req.auth.token.branchSlug.trim() : "";
+
+    const db = getFirestore();
+    if (!isDeveloper) {
+      const flagsSnap = await db.doc("featureFlags/global").get();
+      const flags = flagsSnap.data() as {staffStockUpdates?: boolean} | undefined;
+      if (flags?.staffStockUpdates === false) {
+        throw new HttpsError(
+          "permission-denied",
+          "Staff stock updates are disabled by a Developer. Contact a Developer to re-enable.",
+        );
+      }
+    }
+
+    const productId = cleanString(req.data?.productId, "productId", 160);
+    const rawUpdates = req.data?.updates;
+    if (!Array.isArray(rawUpdates) || rawUpdates.length === 0 || rawUpdates.length > 40) {
+      throw new HttpsError("invalid-argument", "Provide 1–40 branch quantity updates.");
+    }
+
+    type BranchQtyUpdate = {branchId: string; quantity: number};
+    const updates: BranchQtyUpdate[] = rawUpdates.map((row, index) => {
+      if (!row || typeof row !== "object") {
+        throw new HttpsError("invalid-argument", `updates.${index} is invalid.`);
+      }
+      const data = row as Record<string, unknown>;
+      return {
+        branchId: cleanString(data.branchId, `updates.${index}.branchId`, 120),
+        quantity: cleanNumber(data.quantity, `updates.${index}.quantity`, {min: 0, max: 100000, int: true}),
+      };
+    });
+
+    // Deduplicate by branch (last write wins).
+    const byBranch = new Map<string, number>();
+    for (const u of updates) byBranch.set(u.branchId, u.quantity);
+    const uniqueUpdates = [...byBranch.entries()].map(([branchId, quantity]) => ({branchId, quantity}));
+
+    for (const u of uniqueUpdates) {
+      if (!isGlobal && u.branchId !== claimBranch) {
+        throw new HttpsError("permission-denied", "You can only update stock at your assigned branch.");
+      }
+    }
+    if (!isGlobal && !claimBranch) {
+      throw new HttpsError("failed-precondition", "Staff account is not assigned to a branch.");
+    }
+
+    const productRef = db.doc(`products/${productId}`);
+    const productSnap = await productRef.get();
+    if (!productSnap.exists) {
+      throw new HttpsError("not-found", "Product not found.");
+    }
+    const product = productSnap.data() as {
+      name?: string;
+      sku?: string;
+      price?: number;
+      totalStock?: number;
+      lowStockThreshold?: number;
+      image?: string;
+      images?: Array<{url?: string}>;
+      description?: string;
+    };
+
+    type InvTarget = {
+      branchId: string;
+      quantity: number;
+      ref: DocumentReference;
+      exists: boolean;
+    };
+    const targets: InvTarget[] = [];
+    for (const u of uniqueUpdates) {
+      let snap = await db.collection("inventory")
+        .where("branchSlug", "==", u.branchId)
+        .where("productId", "==", productId)
+        .limit(1)
+        .get();
+      if (snap.empty) {
+        snap = await db.collection("inventory")
+          .where("branchId", "==", u.branchId)
+          .where("productId", "==", productId)
+          .limit(1)
+          .get();
+      }
+      if (!snap.empty) {
+        targets.push({branchId: u.branchId, quantity: u.quantity, ref: snap.docs[0].ref, exists: true});
+      } else {
+        targets.push({
+          branchId: u.branchId,
+          quantity: u.quantity,
+          ref: db.collection("inventory").doc(`inv_${u.branchId}_${productId}`),
+          exists: false,
+        });
+      }
+    }
+
+    const now = FieldValue.serverTimestamp();
+    const image =
+      (typeof product.image === "string" && product.image) ||
+      product.images?.find((img) => img?.url)?.url ||
+      "";
+    const threshold = Number(product.lowStockThreshold ?? 0);
+
+    const result = await db.runTransaction(async (tx) => {
+      const freshProduct = await tx.get(productRef);
+      if (!freshProduct.exists) {
+        throw new HttpsError("not-found", "Product disappeared during update.");
+      }
+      const invSnaps = await Promise.all(targets.map((t) => tx.get(t.ref)));
+      let companyStock = Number((freshProduct.data() as {totalStock?: number}).totalStock ?? 0);
+      let totalDelta = 0;
+      const applied: Array<{branchId: string; previous: number; quantity: number}> = [];
+
+      for (let i = 0; i < targets.length; i++) {
+        const target = targets[i];
+        const invSnap = invSnaps[i];
+        const prev = invSnap.exists
+          ? Number((invSnap.data() as {quantity?: number; qty?: number; stock?: number; current?: number})
+            .quantity ?? (invSnap.data() as {qty?: number}).qty ?? (invSnap.data() as {stock?: number}).stock ?? (invSnap.data() as {current?: number}).current ?? 0)
+          : 0;
+        const next = target.quantity;
+        totalDelta += next - prev;
+        const status = next <= 0 ? "out" : next <= threshold ? "low" : "ok";
+        const payload: Record<string, unknown> = {
+          productId,
+          sku: product.sku ?? productId,
+          name: product.name ?? "Product",
+          branchSlug: target.branchId,
+          branchId: target.branchId,
+          quantity: next,
+          qty: next,
+          unitPrice: Number(product.price ?? 0),
+          price: Number(product.price ?? 0),
+          lowStockThreshold: threshold,
+          status,
+          updatedAt: now,
+          updatedBy: uid,
+        };
+        if (image) payload.image = image;
+        if (product.description) payload.description = product.description;
+        if (invSnap.exists) {
+          tx.update(target.ref, payload);
+        } else {
+          tx.set(target.ref, {
+            ...payload,
+            soldThisMonth: 0,
+            createdAt: now,
+            createdBy: uid,
+          });
+        }
+        applied.push({branchId: target.branchId, previous: prev, quantity: next});
+      }
+
+      companyStock = Math.max(0, companyStock + totalDelta);
+      tx.update(productRef, {
+        totalStock: companyStock,
+        isAvailable: companyStock > 0,
+        status: companyStock > 0 ? "active" : "outOfStock",
+        updatedAt: now,
+      });
+
+      return {productId, totalStock: companyStock, updates: applied};
+    });
+
+    await db.collection("auditLogs").add({
+      action: "branch_inventory_set",
+      actorUid: uid,
+      targetId: productId,
+      meta: {
+        productId,
+        branches: result.updates.map((u) => u.branchId),
+        totalStock: result.totalStock,
+      },
+      at: FieldValue.serverTimestamp(),
+    });
+
+    return {ok: true, ...result};
   }
 );
