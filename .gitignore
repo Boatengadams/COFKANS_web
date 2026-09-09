@@ -5,6 +5,8 @@ dist/
 build/
 .cache/
 .env*
+!.env.example
+!.env.production
 .secret.local
 **/.secret.local
 .firebase-config.local
